@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 
+mod parser;
 mod lexer;
 
 // TODO: get rid of the static mut
@@ -47,12 +48,16 @@ fn run_prompt() {
 }
 
 fn run(script: &str) {
+    // TODO: stop boxing report
     let tokens = lexer::scan_tokens(script, Box::new(report));
     print!("Tokens: ");
     for token in &tokens {
         print!("{} ", token);
     }
-    println!()
+    println!();
+    if let Some(ast) = parser::parse(&tokens, Box::new(error)) {
+        println!("Ast: {}", ast);
+    }
 }
 
 fn error(line: usize, message: &str) {

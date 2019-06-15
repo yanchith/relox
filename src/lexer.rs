@@ -1,9 +1,53 @@
+use std::collections::HashMap;
 use std::f64;
 use std::fmt;
 use std::iter::Peekable;
 use std::str::{Chars, FromStr};
 
-pub enum Token {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token {
+    value: TokenValue,
+    span: Span,
+}
+
+impl Token {
+    pub fn new(value: TokenValue, span: Span) -> Self {
+        Self { value, span }
+    }
+
+    pub fn value(&self) -> &TokenValue {
+        &self.value
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
+// TODO: more span info (char range)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    line: usize,
+}
+
+impl Span {
+    pub fn with_line(line: usize) -> Self {
+        Self { line }
+    }
+
+    pub fn line(&self) -> usize {
+        self.line
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TokenValue {
     // Single-character tokens
     LeftParen,
     RightParen,
@@ -49,123 +93,124 @@ pub enum Token {
     True,
     Var,
     While,
-
-    Eof,
 }
 
-impl fmt::Display for Token {
+impl fmt::Display for TokenValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", match self {
-            // TODO: allocate less here (to_stirng())
-            Token::LeftParen => "LEFT_PAREN".to_string(),
-            Token::RightParen => "RIGHT_PAREN".to_string(),
-            Token::LeftBrace => "LEFT_BRACE".to_string(),
-            Token::RightBrace => "RIGHT_BRACE".to_string(),
-            Token::Comma => "COMMA".to_string(),
-            Token::Dot => "DOT".to_string(),
-            Token::Minus => "MINUS".to_string(),
-            Token::Plus => "PLUS".to_string(),
-            Token::Semicolon => "SEMICOLON".to_string(),
-            Token::Slash => "SLASH".to_string(),
-            Token::Star => "STAR".to_string(),
-            Token::Bang => "BANG".to_string(),
-            Token::BangEqual => "BANG_EQUAL".to_string(),
-            Token::Equal => "EQUAL".to_string(),
-            Token::EqualEqual => "EQUAL_EQUAL".to_string(),
-            Token::Greater => "GREATER".to_string(),
-            Token::GreaterEqual => "GREATER_EQUAKL".to_string(),
-            Token::Less => "LESS".to_string(),
-            Token::LessEqual => "LESS_EQUAL".to_string(),
-            Token::Identifier(identifier) => format!("IDENTIFIER({})", identifier),
-            Token::String(string) => format!("STRING({})", string),
-            Token::Number(number) => format!("NUMBER({})", number),
-            Token::And => "AND".to_string(),
-            Token::Class => "CLASS".to_string(),
-            Token::Else => "ELSE".to_string(),
-            Token::False => "FALSE".to_string(),
-            Token::Fun => "FUN".to_string(),
-            Token::For => "FOR".to_string(),
-            Token::If => "IF".to_string(),
-            Token::Nil => "NIL".to_string(),
-            Token::Or => "OR".to_string(),
-            Token::Print => "PRINT".to_string(),
-            Token::Return => "RETURN".to_string(),
-            Token::Super => "SUPER".to_string(),
-            Token::This => "THIS".to_string(),
-            Token::True => "TRUE".to_string(),
-            Token::Var => "VAR".to_string(),
-            Token::While => "WHILE".to_string(),
-            Token::Eof => "EOF".to_string(),
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                // TODO: allocate less here (to_stirng())
+                TokenValue::LeftParen => "LEFT_PAREN".to_string(),
+                TokenValue::RightParen => "RIGHT_PAREN".to_string(),
+                TokenValue::LeftBrace => "LEFT_BRACE".to_string(),
+                TokenValue::RightBrace => "RIGHT_BRACE".to_string(),
+                TokenValue::Comma => "COMMA".to_string(),
+                TokenValue::Dot => "DOT".to_string(),
+                TokenValue::Minus => "MINUS".to_string(),
+                TokenValue::Plus => "PLUS".to_string(),
+                TokenValue::Semicolon => "SEMICOLON".to_string(),
+                TokenValue::Slash => "SLASH".to_string(),
+                TokenValue::Star => "STAR".to_string(),
+                TokenValue::Bang => "BANG".to_string(),
+                TokenValue::BangEqual => "BANG_EQUAL".to_string(),
+                TokenValue::Equal => "EQUAL".to_string(),
+                TokenValue::EqualEqual => "EQUAL_EQUAL".to_string(),
+                TokenValue::Greater => "GREATER".to_string(),
+                TokenValue::GreaterEqual => "GREATER_EQUAKL".to_string(),
+                TokenValue::Less => "LESS".to_string(),
+                TokenValue::LessEqual => "LESS_EQUAL".to_string(),
+                TokenValue::Identifier(identifier) => format!("IDENTIFIER({})", identifier),
+                TokenValue::String(string) => format!("STRING({})", string),
+                TokenValue::Number(number) => format!("NUMBER({})", number),
+                TokenValue::And => "AND".to_string(),
+                TokenValue::Class => "CLASS".to_string(),
+                TokenValue::Else => "ELSE".to_string(),
+                TokenValue::False => "FALSE".to_string(),
+                TokenValue::Fun => "FUN".to_string(),
+                TokenValue::For => "FOR".to_string(),
+                TokenValue::If => "IF".to_string(),
+                TokenValue::Nil => "NIL".to_string(),
+                TokenValue::Or => "OR".to_string(),
+                TokenValue::Print => "PRINT".to_string(),
+                TokenValue::Return => "RETURN".to_string(),
+                TokenValue::Super => "SUPER".to_string(),
+                TokenValue::This => "THIS".to_string(),
+                TokenValue::True => "TRUE".to_string(),
+                TokenValue::Var => "VAR".to_string(),
+                TokenValue::While => "WHILE".to_string(),
+            }
+        )
     }
 }
 
 pub fn scan_tokens(source: &str, report: Box<dyn Fn(usize, &str, &str)>) -> Vec<Token> {
+    let keyword_map = init_keyword_map();
     let mut ctx = LexerCtx::new(source);
     let mut tokens = Vec::new();
 
-    while let Some(c) = ctx.read() {
+    while let Some(c) = ctx.read_char() {
         let maybe_token = match c {
-
             // Always single character tokens
-            CHAR_LEFT_PAREN => Some(Token::LeftParen),
-            CHAR_RIGHT_PAREN => Some(Token::RightParen),
-            CHAR_LEFT_BRACE => Some(Token::LeftBrace),
-            CHAR_RIGHT_BRACE => Some(Token::RightBrace),
-            CHAR_COMMA => Some(Token::Comma),
-            CHAR_MINUS => Some(Token::Minus),
-            CHAR_PLUS => Some(Token::Plus),
-            CHAR_SEMICOLON => Some(Token::Semicolon),
-            CHAR_STAR => Some(Token::Star),
+            CHAR_LEFT_PAREN => Some(TokenValue::LeftParen),
+            CHAR_RIGHT_PAREN => Some(TokenValue::RightParen),
+            CHAR_LEFT_BRACE => Some(TokenValue::LeftBrace),
+            CHAR_RIGHT_BRACE => Some(TokenValue::RightBrace),
+            CHAR_COMMA => Some(TokenValue::Comma),
+            CHAR_DOT => Some(TokenValue::Dot),
+            CHAR_MINUS => Some(TokenValue::Minus),
+            CHAR_PLUS => Some(TokenValue::Plus),
+            CHAR_SEMICOLON => Some(TokenValue::Semicolon),
+            CHAR_STAR => Some(TokenValue::Star),
 
             // One or two character tokens
             CHAR_BANG => {
-                if let Some(CHAR_EQUAL) = ctx.peek() {
-                    ctx.read();
-                    Some(Token::BangEqual)
+                if let Some(CHAR_EQUAL) = ctx.peek_char() {
+                    ctx.read_char();
+                    Some(TokenValue::BangEqual)
                 } else {
-                    Some(Token::Bang)
+                    Some(TokenValue::Bang)
                 }
-            },
+            }
             CHAR_EQUAL => {
-                if let Some(CHAR_EQUAL) = ctx.peek() {
-                    ctx.read();
-                    Some(Token::EqualEqual)
+                if let Some(CHAR_EQUAL) = ctx.peek_char() {
+                    ctx.read_char();
+                    Some(TokenValue::EqualEqual)
                 } else {
-                    Some(Token::Equal)
+                    Some(TokenValue::Equal)
                 }
-            },
+            }
             CHAR_LESS => {
-                if let Some(CHAR_EQUAL) = ctx.peek() {
-                    ctx.read();
-                    Some(Token::LessEqual)
+                if let Some(CHAR_EQUAL) = ctx.peek_char() {
+                    ctx.read_char();
+                    Some(TokenValue::LessEqual)
                 } else {
-                    Some(Token::Less)
+                    Some(TokenValue::Less)
                 }
-            },
+            }
             CHAR_GREATER => {
-                if let Some(CHAR_EQUAL) = ctx.peek() {
-                    ctx.read();
-                    Some(Token::GreaterEqual)
+                if let Some(CHAR_EQUAL) = ctx.peek_char() {
+                    ctx.read_char();
+                    Some(TokenValue::GreaterEqual)
                 } else {
-                    Some(Token::Greater)
+                    Some(TokenValue::Greater)
                 }
-            },
+            }
 
             // Slash token and comments
-
             CHAR_SLASH => {
-                if let Some(CHAR_SLASH) = ctx.peek() {
+                if let Some(CHAR_SLASH) = ctx.peek_char() {
                     ctx.consume_until_eol();
                     None
                 } else {
-                    Some(Token::Slash)
+                    Some(TokenValue::Slash)
                 }
             }
 
             CHAR_DOUBLE_QUOTE => {
                 if let Some(string) = ctx.read_string() {
-                    Some(Token::String(string))
+                    Some(TokenValue::String(string))
                 } else {
                     let message = format!("Unterminated string");
                     report(ctx.curr_line, "", &message);
@@ -178,13 +223,11 @@ pub fn scan_tokens(source: &str, report: Box<dyn Fn(usize, &str, &str)>) -> Vec<
                 None
             }
 
-            CHAR_WHITESPACE | CHAR_CARRIAGE_RETURN | CHAR_TAB => {
-                None
-            }
+            CHAR_WHITESPACE | CHAR_CARRIAGE_RETURN | CHAR_TAB => None,
 
             digit if is_digit(digit) => {
                 if let Some(number) = ctx.read_number(digit) {
-                    Some(Token::Number(number))
+                    Some(TokenValue::Number(number))
                 } else {
                     let message = format!("Invalid number");
                     report(ctx.curr_line, "", &message);
@@ -192,15 +235,25 @@ pub fn scan_tokens(source: &str, report: Box<dyn Fn(usize, &str, &str)>) -> Vec<
                 }
             }
 
-            unexpected_char => {
-                let message = format!("Unexpected character {}", unexpected_char);
+            alpha if is_alpha(alpha) => {
+                let identifier = ctx.read_identifier(alpha);
+                let token = keyword_map
+                    .get(&identifier)
+                    .cloned()
+                    .unwrap_or_else(|| TokenValue::Identifier(identifier));
+
+                Some(token)
+            }
+
+            unexpected => {
+                let message = format!("Unexpected character {}", unexpected);
                 report(ctx.curr_line, "", &message);
                 break;
             }
         };
 
         if let Some(token) = maybe_token {
-            tokens.push(token);
+            tokens.push(Token::new(token, Span::with_line(ctx.curr_line)));
         }
     }
 
@@ -220,11 +273,6 @@ impl<'a> LexerCtx<'a> {
             curr_char: 0,
             curr_line: 1,
         }
-    }
-
-    fn read(&mut self) -> Option<char> {
-        self.curr_char += 1;
-        self.source.next()
     }
 
     fn consume_until_eol(&mut self) {
@@ -265,10 +313,10 @@ impl<'a> LexerCtx<'a> {
         let mut buffer = format!("{}", first_digit);
 
         // TODO: float parsing
-        while let Some(maybe_digit) = self.peek() {
+        while let Some(maybe_digit) = self.peek_char() {
             if is_digit(maybe_digit) {
                 buffer.push(maybe_digit);
-                self.read();
+                self.read_char();
             } else {
                 break;
             }
@@ -277,7 +325,27 @@ impl<'a> LexerCtx<'a> {
         f64::from_str(&buffer).ok()
     }
 
-    fn peek(&mut self) -> Option<char> {
+    fn read_identifier(&mut self, first_alpha: char) -> String {
+        let mut buffer = format!("{}", first_alpha);
+
+        while let Some(maybe_alphanumeric) = self.peek_char() {
+            if is_alphanumeric(maybe_alphanumeric) {
+                buffer.push(maybe_alphanumeric);
+                self.read_char();
+            } else {
+                break;
+            }
+        }
+
+        buffer
+    }
+
+    fn read_char(&mut self) -> Option<char> {
+        self.curr_char += 1;
+        self.source.next()
+    }
+
+    fn peek_char(&mut self) -> Option<char> {
         self.source.peek().copied()
     }
 }
@@ -286,11 +354,45 @@ fn is_digit(c: char) -> bool {
     c >= CHAR_0 && c <= CHAR_9
 }
 
+fn is_alpha(c: char) -> bool {
+    c >= CHAR_LOWERCASE_A && c <= CHAR_LOWERCASE_Z
+        || c >= CHAR_UPPERCASE_A && c <= CHAR_UPPERCASE_Z
+        || c == CHAR_UNDERSCORE
+}
+
+fn is_alphanumeric(c: char) -> bool {
+    is_alpha(c) || is_digit(c)
+}
+
+fn init_keyword_map() -> HashMap<String, TokenValue> {
+    let mut map = HashMap::with_capacity(16);
+
+    map.insert(KEYWORD_AND.to_string(), TokenValue::And);
+    map.insert(KEYWORD_CLASS.to_string(), TokenValue::Class);
+    map.insert(KEYWORD_ELSE.to_string(), TokenValue::Else);
+    map.insert(KEYWORD_FALSE.to_string(), TokenValue::False);
+    map.insert(KEYWORD_FUN.to_string(), TokenValue::Fun);
+    map.insert(KEYWORD_FOR.to_string(), TokenValue::For);
+    map.insert(KEYWORD_IF.to_string(), TokenValue::If);
+    map.insert(KEYWORD_NIL.to_string(), TokenValue::Nil);
+    map.insert(KEYWORD_OR.to_string(), TokenValue::Or);
+    map.insert(KEYWORD_PRINT.to_string(), TokenValue::Print);
+    map.insert(KEYWORD_RETURN.to_string(), TokenValue::Return);
+    map.insert(KEYWORD_SUPER.to_string(), TokenValue::Super);
+    map.insert(KEYWORD_THIS.to_string(), TokenValue::This);
+    map.insert(KEYWORD_TRUE.to_string(), TokenValue::True);
+    map.insert(KEYWORD_VAR.to_string(), TokenValue::Var);
+    map.insert(KEYWORD_WHILE.to_string(), TokenValue::While);
+
+    map
+}
+
 const CHAR_LEFT_PAREN: char = '(';
 const CHAR_RIGHT_PAREN: char = ')';
 const CHAR_LEFT_BRACE: char = '{';
 const CHAR_RIGHT_BRACE: char = '}';
 const CHAR_COMMA: char = ',';
+const CHAR_DOT: char = '.';
 const CHAR_MINUS: char = '-';
 const CHAR_PLUS: char = '+';
 const CHAR_SEMICOLON: char = ';';
@@ -300,7 +402,7 @@ const CHAR_STAR: char = '*';
 const CHAR_BANG: char = '!';
 const CHAR_EQUAL: char = '=';
 const CHAR_LESS: char = '<';
-const CHAR_GREATER: char= '>';
+const CHAR_GREATER: char = '>';
 
 const CHAR_DOUBLE_QUOTE: char = '"';
 
@@ -311,3 +413,25 @@ const CHAR_TAB: char = '\t';
 
 const CHAR_0: char = '0';
 const CHAR_9: char = '9';
+const CHAR_LOWERCASE_A: char = 'a';
+const CHAR_LOWERCASE_Z: char = 'z';
+const CHAR_UPPERCASE_A: char = 'A';
+const CHAR_UPPERCASE_Z: char = 'Z';
+const CHAR_UNDERSCORE: char = '_';
+
+const KEYWORD_AND: &str = "and";
+const KEYWORD_CLASS: &str = "class";
+const KEYWORD_ELSE: &str = "else";
+const KEYWORD_FALSE: &str = "false";
+const KEYWORD_FUN: &str = "fun";
+const KEYWORD_FOR: &str = "for";
+const KEYWORD_IF: &str = "if";
+const KEYWORD_NIL: &str = "nil";
+const KEYWORD_OR: &str = "or";
+const KEYWORD_PRINT: &str = "print";
+const KEYWORD_RETURN: &str = "return";
+const KEYWORD_SUPER: &str = "super";
+const KEYWORD_THIS: &str = "this";
+const KEYWORD_TRUE: &str = "true";
+const KEYWORD_VAR: &str = "var";
+const KEYWORD_WHILE: &str = "while";
