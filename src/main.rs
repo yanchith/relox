@@ -1,10 +1,10 @@
 use std::io::{self, Write};
 
-mod parser;
-mod lexer;
+use crate::reporter::Reporter;
 
-// TODO: get rid of the static mut
-static mut HAD_ERROR: bool = false;
+mod lexer;
+mod parser;
+mod reporter;
 
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -20,18 +20,20 @@ fn main() {
 }
 
 fn run_file(file_path: String) {
+    let mut reporter = Reporter::new();
     let buffer = std::fs::read_to_string(&file_path).expect("Failed to read file");
-    run(&buffer);
+    run(&mut reporter, &buffer);
 }
 
 fn run_prompt() {
+    let mut reporter = Reporter::new();
     let mut buffer = String::new();
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
     loop {
-        let had_error = unsafe { HAD_ERROR };
-        if had_error {
+        if reporter.has_error_reports() {
+            reporter.print_error_reports();
             break;
         }
 
@@ -42,31 +44,20 @@ fn run_prompt() {
             .read_line(&mut buffer)
             .expect("Failed to read from console");
 
-        run(&buffer);
+        run(&mut reporter, &buffer);
         buffer.clear();
     }
 }
 
-fn run(script: &str) {
-    // TODO: stop boxing report
-    let tokens = lexer::scan_tokens(script, Box::new(report));
+fn run(reporter: &mut Reporter, script: &str) {
+    let tokens = lexer::scan(reporter, script);
     print!("Tokens: ");
     for token in &tokens {
         print!("{} ", token);
     }
     println!();
-    if let Some(ast) = parser::parse(&tokens, Box::new(error)) {
+    if let Some(ast) = parser::parse(reporter, &tokens) {
         println!("Ast: {}", ast);
     }
 }
 
-fn error(line: usize, message: &str) {
-    report(line, "", message);
-}
-
-fn report(line: usize, place: &str, message: &str) {
-    eprintln!("ERROR on line {} around {}: {}", line, place, message);
-    unsafe {
-        HAD_ERROR = true;
-    }
-}

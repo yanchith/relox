@@ -3,7 +3,8 @@ use std::fmt;
 use std::iter::Peekable;
 use std::slice;
 
-use crate::lexer::{Token, TokenValue, Span};
+use crate::lexer::{Token, TokenValue};
+use crate::reporter::Reporter;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
@@ -229,21 +230,19 @@ primary        → NUMBER | STRING | "false" | "true" | "nil"
 
 pub struct ParseError;
 
-pub fn parse(tokens: &[Token], error: Box<dyn Fn(usize, &str)>) -> Option<Expression> {
-    let mut ctx = ParserCtx::new(tokens, error);
-    parse_expression(&mut ctx).ok()
+pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Expression> {
+    let mut ctx = ParserCtx::new(tokens);
+    parse_expression(reporter, &mut ctx).ok()
 }
 
 struct ParserCtx<'a> {
     tokens: Peekable<slice::Iter<'a, Token>>,
-    error: Box<dyn Fn(usize, &str)>,
 }
 
 impl<'a> ParserCtx<'a> {
-    fn new(tokens: &'a [Token], error: Box<dyn Fn(usize, &str)>) -> Self {
+    fn new(tokens: &'a [Token]) -> Self {
         Self {
             tokens: tokens.iter().peekable(),
-            error,
         }
     }
 
@@ -273,47 +272,49 @@ impl<'a> ParserCtx<'a> {
         self.tokens.peek().copied()
     }
 
-    fn consume(&mut self, token_value: &TokenValue, error_message: &str) -> bool {
+    fn consume(
+        &mut self,
+        reporter: &mut Reporter,
+        token_value: &TokenValue,
+        error_message: &str,
+    ) -> bool {
         if self.check_token(token_value) {
             self.read_token();
             return true;
         }
 
         if let Some(token) = self.peek_token() {
-            let span = token.span();
-            self.error(span, error_message);
+            reporter.report_on_line(error_message, token.line());
         } else {
             // TODO: report correct span, maybe add back the EOF token
-            self.error(Span::with_line(0), error_message);
+            reporter.report(error_message);
         }
 
         false
     }
-
-    fn error(&self, span: Span, message: &str) {
-        let error = &self.error;
-        error(span.line(), message);
-    }
 }
 
-fn parse_expression(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_expression(
+    reporter: &mut Reporter,
+    ctx: &mut ParserCtx,
+) -> Result<Expression, ParseError> {
     /*
     expression     → equality ;
      */
 
-    parse_equality(ctx)
+    parse_equality(reporter, ctx)
 }
 
-fn parse_equality(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_equality(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
     /*
     equality       → comparison ( ( "!=" | "==" ) comparison )* ;
     */
 
-    let mut expr = parse_comparison(ctx)?;
+    let mut expr = parse_comparison(reporter, ctx)?;
     while let Some(operator_token) =
         ctx.match_tokens(&[TokenValue::BangEqual, TokenValue::EqualEqual])
     {
-        let right_expr = parse_comparison(ctx)?;
+        let right_expr = parse_comparison(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary operator");
         expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
@@ -322,19 +323,22 @@ fn parse_equality(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
     Ok(expr)
 }
 
-fn parse_comparison(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_comparison(
+    reporter: &mut Reporter,
+    ctx: &mut ParserCtx,
+) -> Result<Expression, ParseError> {
     /*
     comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
     */
 
-    let mut expr = parse_addition(ctx)?;
+    let mut expr = parse_addition(reporter, ctx)?;
     while let Some(operator_token) = ctx.match_tokens(&[
         TokenValue::Less,
         TokenValue::LessEqual,
         TokenValue::Greater,
         TokenValue::GreaterEqual,
     ]) {
-        let right_expr = parse_addition(ctx)?;
+        let right_expr = parse_addition(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary operator");
         expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
@@ -343,14 +347,14 @@ fn parse_comparison(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
     Ok(expr)
 }
 
-fn parse_addition(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_addition(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
     /*
     addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
     */
 
-    let mut expr = parse_multiplication(ctx)?;
+    let mut expr = parse_multiplication(reporter, ctx)?;
     while let Some(operator_token) = ctx.match_tokens(&[TokenValue::Plus, TokenValue::Minus]) {
-        let right_expr = parse_multiplication(ctx)?;
+        let right_expr = parse_multiplication(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary operator");
         expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
@@ -359,14 +363,17 @@ fn parse_addition(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
     Ok(expr)
 }
 
-fn parse_multiplication(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_multiplication(
+    reporter: &mut Reporter,
+    ctx: &mut ParserCtx,
+) -> Result<Expression, ParseError> {
     /*
     multiplication → unary ( ( "/" | "*" ) unary )* ;
     */
 
-    let mut expr = parse_unary(ctx)?;
+    let mut expr = parse_unary(reporter, ctx)?;
     while let Some(operator_token) = ctx.match_tokens(&[TokenValue::Star, TokenValue::Slash]) {
-        let right_expr = parse_unary(ctx)?;
+        let right_expr = parse_unary(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary operator");
         expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
@@ -375,23 +382,23 @@ fn parse_multiplication(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
     Ok(expr)
 }
 
-fn parse_unary(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_unary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
     /*
     unary          → ( "!" | "-" ) unary
                    | primary ;
     */
 
     if let Some(operator_token) = ctx.match_tokens(&[TokenValue::Bang, TokenValue::Minus]) {
-        let expr = parse_unary(ctx)?;
+        let expr = parse_unary(reporter, ctx)?;
         let operator = UnaryOperator::try_from(operator_token.clone())
             .expect("Token should be a unary operator");
         Ok(Expression::Unary(UnaryExpression::new(expr, operator)))
     } else {
-        parse_primary(ctx)
+        parse_primary(reporter, ctx)
     }
 }
 
-fn parse_primary(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
     /*
     primary        → NUMBER | STRING | "false" | "true" | "nil"
                    | "(" expression ")" ;
@@ -402,11 +409,15 @@ fn parse_primary(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
             TokenValue::True => Ok(Expression::Literal(LiteralExpression::Boolean(true))),
             TokenValue::False => Ok(Expression::Literal(LiteralExpression::Boolean(false))),
             TokenValue::Nil => Ok(Expression::Literal(LiteralExpression::Nil)),
-            TokenValue::Number(number) => Ok(Expression::Literal(LiteralExpression::Number(*number))),
-            TokenValue::String(string) => Ok(Expression::Literal(LiteralExpression::String(string.clone()))),
+            TokenValue::Number(number) => {
+                Ok(Expression::Literal(LiteralExpression::Number(*number)))
+            }
+            TokenValue::String(string) => Ok(Expression::Literal(LiteralExpression::String(
+                string.clone(),
+            ))),
             TokenValue::LeftParen => {
-                let expr = parse_expression(ctx)?;
-                let success = ctx.consume(&TokenValue::RightParen, "Expected ')' after expression");
+                let expr = parse_expression(reporter, ctx)?;
+                let success = ctx.consume(reporter, &TokenValue::RightParen, "Expected ')' after expression");
                 if success {
                     Ok(Expression::Grouping(GroupingExpression::new(expr)))
                 } else {
@@ -414,14 +425,12 @@ fn parse_primary(ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
                 }
             }
             _ => {
-                ctx.error(token.span(), "Expected expression");
+                reporter.report_on_line("Expected expression", token.line());
                 Err(ParseError)
             }
         }
     } else {
-        // TODO: report error even if we don't have a span... hmmm
-        // ctx.error("Expected expression");
+        reporter.report("Expected expression");
         Err(ParseError)
     }
 }
-

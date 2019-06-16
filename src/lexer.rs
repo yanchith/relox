@@ -4,45 +4,32 @@ use std::fmt;
 use std::iter::Peekable;
 use std::str::{Chars, FromStr};
 
+use crate::reporter::Reporter;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     value: TokenValue,
-    span: Span,
+    line: u32,
 }
 
 impl Token {
-    pub fn new(value: TokenValue, span: Span) -> Self {
-        Self { value, span }
+    // TODO: replace line with Span
+    pub fn new(value: TokenValue, line: u32) -> Self {
+        Self { value, line }
     }
 
     pub fn value(&self) -> &TokenValue {
         &self.value
     }
 
-    pub fn span(&self) -> Span {
-        self.span
+    pub fn line(&self) -> u32 {
+        self.line
     }
 }
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.value)
-    }
-}
-
-// TODO: more span info (char range)
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Span {
-    line: usize,
-}
-
-impl Span {
-    pub fn with_line(line: usize) -> Self {
-        Self { line }
-    }
-
-    pub fn line(&self) -> usize {
-        self.line
     }
 }
 
@@ -145,7 +132,7 @@ impl fmt::Display for TokenValue {
     }
 }
 
-pub fn scan_tokens(source: &str, report: Box<dyn Fn(usize, &str, &str)>) -> Vec<Token> {
+pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
     let keyword_map = init_keyword_map();
     let mut ctx = LexerCtx::new(source);
     let mut tokens = Vec::new();
@@ -213,7 +200,7 @@ pub fn scan_tokens(source: &str, report: Box<dyn Fn(usize, &str, &str)>) -> Vec<
                     Some(TokenValue::String(string))
                 } else {
                     let message = format!("Unterminated string");
-                    report(ctx.curr_line, "", &message);
+                    reporter.report_on_line(&message, ctx.curr_line);
                     break;
                 }
             }
@@ -230,7 +217,7 @@ pub fn scan_tokens(source: &str, report: Box<dyn Fn(usize, &str, &str)>) -> Vec<
                     Some(TokenValue::Number(number))
                 } else {
                     let message = format!("Invalid number");
-                    report(ctx.curr_line, "", &message);
+                    reporter.report_on_line(&message, ctx.curr_line);
                     break;
                 }
             }
@@ -247,13 +234,13 @@ pub fn scan_tokens(source: &str, report: Box<dyn Fn(usize, &str, &str)>) -> Vec<
 
             unexpected => {
                 let message = format!("Unexpected character {}", unexpected);
-                report(ctx.curr_line, "", &message);
+                reporter.report_on_line(&message, ctx.curr_line);
                 break;
             }
         };
 
         if let Some(token) = maybe_token {
-            tokens.push(Token::new(token, Span::with_line(ctx.curr_line)));
+            tokens.push(Token::new(token, ctx.curr_line));
         }
     }
 
@@ -262,8 +249,8 @@ pub fn scan_tokens(source: &str, report: Box<dyn Fn(usize, &str, &str)>) -> Vec<
 
 struct LexerCtx<'a> {
     source: Peekable<Chars<'a>>,
-    curr_char: usize,
-    curr_line: usize,
+    curr_char: u32,
+    curr_line: u32,
 }
 
 impl<'a> LexerCtx<'a> {
