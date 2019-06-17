@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::parser::{
-    BinaryExpression, BinaryOperator, Expression, GroupingExpression, LiteralExpression, Program,
-    Statement, UnaryExpression, UnaryOperator,
+    BinaryExpr, BinaryOperator, Expr, GroupExpr, LitExpr, Program, Stmt, UnaryExpr,
+    UnaryOperator,
 };
 use crate::reporter::Reporter;
 
@@ -57,36 +57,28 @@ impl Interpreter {
     pub fn interpret(&self, reporter: &mut Reporter, program: &Program) -> Option<Value> {
         let mut last_value = None;
 
-        for stmt in program.statements() {
-            last_value = self.interpret_statement(reporter, stmt);
+        for stmt in program.stmts() {
+            last_value = self.interpret_stmt(reporter, stmt);
         }
 
         last_value
     }
 
-    fn interpret_statement(&self, reporter: &mut Reporter, stmt: &Statement) -> Option<Value> {
+    fn interpret_stmt(&self, reporter: &mut Reporter, stmt: &Stmt) -> Option<Value> {
         match stmt {
-            Statement::Expression(expr_stmt) => {
-                self.interpret_expression(reporter, expr_stmt.expression())
-            }
-            Statement::Print(print_stmt) => {
-                match self.interpret_expression(reporter, print_stmt.expression()) {
-                    Some(value) => {
-                        println!("{}", value);
-                        Some(value)
-                    }
-                    None => None,
+            Stmt::Expr(expr_stmt) => self.interpret_expr(reporter, expr_stmt.expr()),
+            Stmt::Print(print_stmt) => match self.interpret_expr(reporter, print_stmt.expr()) {
+                Some(value) => {
+                    println!("{}", value);
+                    Some(value)
                 }
-            }
+                None => None,
+            },
         }
     }
 
-    fn interpret_expression(
-        &self,
-        reporter: &mut Reporter,
-        expression: &Expression,
-    ) -> Option<Value> {
-        match evaluate_expression(expression) {
+    fn interpret_expr(&self, reporter: &mut Reporter, expr: &Expr) -> Option<Value> {
+        match evaluate_expr(expr) {
             Ok(value) => Some(value),
             Err(err) => {
                 match err.kind {
@@ -100,31 +92,31 @@ impl Interpreter {
     }
 }
 
-fn evaluate_expression(expression: &Expression) -> InterpreterResult<Value> {
-    match expression {
-        Expression::Literal(literal) => Ok(evaluate_literal(literal)),
-        Expression::Grouping(grouping) => evaluate_grouping(grouping),
-        Expression::Unary(unary) => evaluate_unary(unary),
-        Expression::Binary(binary) => evaluate_binary(binary),
+fn evaluate_expr(expr: &Expr) -> InterpreterResult<Value> {
+    match expr {
+        Expr::Lit(lit) => Ok(evaluate_lit(lit)),
+        Expr::Group(group) => evaluate_group(group),
+        Expr::Unary(unary) => evaluate_unary(unary),
+        Expr::Binary(binary) => evaluate_binary(binary),
     }
 }
 
-fn evaluate_literal(literal: &LiteralExpression) -> Value {
-    match literal {
-        LiteralExpression::Number(number) => Value::Number(*number),
+fn evaluate_lit(lit: &LitExpr) -> Value {
+    match lit {
+        LitExpr::Number(number) => Value::Number(*number),
         // TODO: should this clone?
-        LiteralExpression::String(string) => Value::String(string.clone()),
-        LiteralExpression::Boolean(boolean) => Value::Boolean(*boolean),
-        LiteralExpression::Nil => Value::Nil,
+        LitExpr::String(string) => Value::String(string.clone()),
+        LitExpr::Boolean(boolean) => Value::Boolean(*boolean),
+        LitExpr::Nil => Value::Nil,
     }
 }
 
-fn evaluate_grouping(grouping: &GroupingExpression) -> InterpreterResult<Value> {
-    evaluate_expression(grouping.expression())
+fn evaluate_group(group: &GroupExpr) -> InterpreterResult<Value> {
+    evaluate_expr(group.expr())
 }
 
-fn evaluate_unary(unary: &UnaryExpression) -> InterpreterResult<Value> {
-    let value = evaluate_expression(unary.expression())?;
+fn evaluate_unary(unary: &UnaryExpr) -> InterpreterResult<Value> {
+    let value = evaluate_expr(unary.expr())?;
     match unary.operator() {
         UnaryOperator::Minus => match &value {
             Value::Number(number) => Ok(Value::Number(-number)),
@@ -134,9 +126,9 @@ fn evaluate_unary(unary: &UnaryExpression) -> InterpreterResult<Value> {
     }
 }
 
-fn evaluate_binary(binary: &BinaryExpression) -> InterpreterResult<Value> {
-    let left_value = evaluate_expression(binary.left_expression())?;
-    let right_value = evaluate_expression(binary.right_expression())?;
+fn evaluate_binary(binary: &BinaryExpr) -> InterpreterResult<Value> {
+    let left_value = evaluate_expr(binary.left_expr())?;
+    let right_value = evaluate_expr(binary.right_expr())?;
 
     match binary.operator() {
         BinaryOperator::Plus => match (left_value, right_value) {

@@ -10,18 +10,26 @@ use crate::reporter::Reporter;
 
 GRAMMAR
 
-program   → statement* EOF ;
+program   → declaration* EOF ;
+
+We express "statement precedence" in production rules. Declaration
+stmts are not allowed everywhere other stmts are, so we have
+to give them lower precedence, specifying them earlier in the
+production rules.
+
+declaration → varDecl
+            | statement ;
 
 statement → exprStmt
           | printStmt ;
 
-exprStmt  → expression ";" ;
-printStmt → "print" expression ";" ;
+exprStmt  → expr ";" ;
+printStmt → "print" expr ";" ;
 
 We express operator precedence in production rules. Equality has the
 weakest precedence, unary operators have the strongest.
 
-expression     → equality ;
+expr     → equality ;
 equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
 addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
@@ -29,36 +37,34 @@ multiplication → unary ( ( "/" | "*" ) unary )* ;
 unary          → ( "!" | "-" ) unary
                | primary ;
 primary        → NUMBER | STRING | "false" | "true" | "nil"
-               | "(" expression ")" ;
+               | "(" expr ")" ;
 
  */
 
-// TODO: rename all occurences of expression -> expr and statement -> stmt
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    statements: Vec<Statement>,
+    stmts: Vec<Stmt>,
 }
 
 impl Program {
-    pub fn new(statements: Vec<Statement>) -> Self {
-        Self { statements }
+    pub fn new(stmts: Vec<Stmt>) -> Self {
+        Self { stmts }
     }
 
-    pub fn statements(&self) -> &[Statement] {
-        &self.statements
+    pub fn stmts(&self) -> &[Stmt] {
+        &self.stmts
     }
 }
 
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut first = true;
-        for statement in &self.statements {
+        for stmt in &self.stmts {
             if !first {
-                writeln!(f, "")?;
+                writeln!(f)?;
             }
             first = false;
-            write!(f, "{} ", statement)?;
+            write!(f, "{} ", stmt)?;
         }
 
         Ok(())
@@ -66,151 +72,151 @@ impl fmt::Display for Program {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Statement {
-    Expression(ExpressionStatement),
-    Print(PrintStatement),
+pub enum Stmt {
+    Expr(ExprStmt),
+    Print(PrintStmt),
 }
 
-impl fmt::Display for Statement {
+impl fmt::Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                Statement::Expression(expression) => expression.to_string(),
-                Statement::Print(print) => print.to_string(),
+                Stmt::Expr(expr) => expr.to_string(),
+                Stmt::Print(print) => print.to_string(),
             }
         )
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExpressionStatement {
-    expression: Expression,
+pub struct ExprStmt {
+    expr: Expr,
 }
 
-impl ExpressionStatement {
-    pub fn new(expression: Expression) -> Self {
-        Self { expression }
+impl ExprStmt {
+    pub fn new(expr: Expr) -> Self {
+        Self { expr }
     }
 
-    pub fn expression(&self) -> &Expression {
-        &self.expression
+    pub fn expr(&self) -> &Expr {
+        &self.expr
     }
 }
 
-impl fmt::Display for ExpressionStatement {
+impl fmt::Display for ExprStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "(; {})", self.expression)
+        write!(f, "(stmt {})", self.expr)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PrintStatement {
-    expression: Expression,
+pub struct PrintStmt {
+    expr: Expr,
 }
 
-impl PrintStatement {
-    pub fn new(expression: Expression) -> Self {
-        Self { expression }
+impl PrintStmt {
+    pub fn new(expr: Expr) -> Self {
+        Self { expr }
     }
 
-    pub fn expression(&self) -> &Expression {
-        &self.expression
+    pub fn expr(&self) -> &Expr {
+        &self.expr
     }
 }
 
-impl fmt::Display for PrintStatement {
+impl fmt::Display for PrintStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "(print {})", self.expression)
+        write!(f, "(print {})", self.expr)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expression {
-    Literal(LiteralExpression),
-    Grouping(GroupingExpression),
-    Unary(UnaryExpression),
-    Binary(BinaryExpression),
+pub enum Expr {
+    Lit(LitExpr),
+    Group(GroupExpr),
+    Unary(UnaryExpr),
+    Binary(BinaryExpr),
 }
 
-impl fmt::Display for Expression {
+impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                Expression::Literal(literal) => literal.to_string(),
-                Expression::Grouping(grouping) => grouping.to_string(),
-                Expression::Unary(unary) => unary.to_string(),
-                Expression::Binary(binary) => binary.to_string(),
+                Expr::Lit(lit) => lit.to_string(),
+                Expr::Group(group) => group.to_string(),
+                Expr::Unary(unary) => unary.to_string(),
+                Expr::Binary(binary) => binary.to_string(),
             }
         )
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum LiteralExpression {
+pub enum LitExpr {
     Number(f64),
     String(String),
     Boolean(bool),
     Nil,
 }
 
-impl fmt::Display for LiteralExpression {
+impl fmt::Display for LitExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                LiteralExpression::Number(number) => number.to_string(),
-                LiteralExpression::String(string) => format!("\"{}\"", string),
-                LiteralExpression::Boolean(boolean) => boolean.to_string(),
-                LiteralExpression::Nil => "nil".to_string(),
+                LitExpr::Number(number) => number.to_string(),
+                LitExpr::String(string) => format!("\"{}\"", string),
+                LitExpr::Boolean(boolean) => boolean.to_string(),
+                LitExpr::Nil => "nil".to_string(),
             }
         )
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct GroupingExpression {
-    expression: Box<Expression>,
+pub struct GroupExpr {
+    expr: Box<Expr>,
 }
 
-impl GroupingExpression {
-    pub fn new(expression: Expression) -> Self {
+impl GroupExpr {
+    pub fn new(expr: Expr) -> Self {
         Self {
-            expression: Box::new(expression),
+            expr: Box::new(expr),
         }
     }
 
-    pub fn expression(&self) -> &Expression {
-        &self.expression
+    pub fn expr(&self) -> &Expr {
+        &self.expr
     }
 }
 
-impl fmt::Display for GroupingExpression {
+impl fmt::Display for GroupExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "(group {})", self.expression)
+        write!(f, "(group {})", self.expr)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct UnaryExpression {
-    expression: Box<Expression>,
+pub struct UnaryExpr {
+    expr: Box<Expr>,
     operator: UnaryOperator,
 }
 
-impl UnaryExpression {
-    pub fn new(expression: Expression, operator: UnaryOperator) -> Self {
+impl UnaryExpr {
+    pub fn new(expr: Expr, operator: UnaryOperator) -> Self {
         Self {
-            expression: Box::new(expression),
+            expr: Box::new(expr),
             operator,
         }
     }
 
-    pub fn expression(&self) -> &Expression {
-        &self.expression
+    pub fn expr(&self) -> &Expr {
+        &self.expr
     }
 
     pub fn operator(&self) -> UnaryOperator {
@@ -218,34 +224,34 @@ impl UnaryExpression {
     }
 }
 
-impl fmt::Display for UnaryExpression {
+impl fmt::Display for UnaryExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "({} {})", self.operator, self.expression)
+        write!(f, "({} {})", self.operator, self.expr)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct BinaryExpression {
-    left_expression: Box<Expression>,
-    right_expression: Box<Expression>,
+pub struct BinaryExpr {
+    left_expr: Box<Expr>,
+    right_expr: Box<Expr>,
     operator: BinaryOperator,
 }
 
-impl BinaryExpression {
-    pub fn new(left: Expression, right: Expression, operator: BinaryOperator) -> Self {
+impl BinaryExpr {
+    pub fn new(left: Expr, right: Expr, operator: BinaryOperator) -> Self {
         Self {
-            left_expression: Box::new(left),
-            right_expression: Box::new(right),
+            left_expr: Box::new(left),
+            right_expr: Box::new(right),
             operator,
         }
     }
 
-    pub fn left_expression(&self) -> &Expression {
-        &self.left_expression
+    pub fn left_expr(&self) -> &Expr {
+        &self.left_expr
     }
 
-    pub fn right_expression(&self) -> &Expression {
-        &self.right_expression
+    pub fn right_expr(&self) -> &Expr {
+        &self.right_expr
     }
 
     pub fn operator(&self) -> BinaryOperator {
@@ -253,12 +259,12 @@ impl BinaryExpression {
     }
 }
 
-impl fmt::Display for BinaryExpression {
+impl fmt::Display for BinaryExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "({} {} {})",
-            self.operator, self.left_expression, self.right_expression
+            self.operator, self.left_expr, self.right_expr
         )
     }
 }
@@ -362,17 +368,17 @@ pub type ParseResult<T> = Result<T, ParseError>;
 pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Program> {
     let mut ctx = ParserCtx::new(tokens);
 
-    let mut statements = Vec::new();
-    while !ctx.is_at_end() {
-        match parse_statement(reporter, &mut ctx) {
-            Ok(statement) => statements.push(statement),
-            Err(err) => {
+    let mut stmts = Vec::new();
+    while ctx.has_more_tokens() {
+        match parse_stmt(reporter, &mut ctx) {
+            Ok(stmt) => stmts.push(stmt),
+            Err(_) => {
                 return None;
             }
         }
     }
 
-    Some(Program::new(statements))
+    Some(Program::new(stmts))
 }
 
 struct ParserCtx<'a> {
@@ -433,70 +439,64 @@ impl<'a> ParserCtx<'a> {
         false
     }
 
-    fn is_at_end(&mut self) -> bool {
-        self.tokens.peek() == None
+    fn has_more_tokens(&mut self) -> bool {
+        self.tokens.peek().is_some()
     }
 }
 
-fn parse_statement(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Statement> {
+fn parse_stmt(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
     statement → exprStmt
               | printStmt ;
     */
     if ctx.read_tokens(&[TokenValue::Print]).is_some() {
-        finish_parse_print_statement(reporter, ctx)
+        finish_parse_print_stmt(reporter, ctx)
     } else {
-        parse_expression_statement(reporter, ctx)
+        parse_expr_stmt(reporter, ctx)
     }
 }
 
-fn finish_parse_print_statement(
-    reporter: &mut Reporter,
-    ctx: &mut ParserCtx,
-) -> ParseResult<Statement> {
+fn finish_parse_print_stmt(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
-    printStmt → "print" expression ";" ;
+    printStmt → "print" expr ";" ;
     */
-    let expr = parse_expression(reporter, ctx)?;
+    let expr = parse_expr(reporter, ctx)?;
     ctx.check_and_skip_token(
         reporter,
         &TokenValue::Semicolon,
         "Expected a ; after a print statement",
     );
 
-    Ok(Statement::Print(PrintStatement::new(expr)))
+    Ok(Stmt::Print(PrintStmt::new(expr)))
 }
 
-fn parse_expression_statement(
-    reporter: &mut Reporter,
-    ctx: &mut ParserCtx,
-) -> ParseResult<Statement> {
+fn parse_expr_stmt(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
-    exprStmt  → expression ";" ;
+    exprStmt  → expr ";" ;
     */
-    let expr = parse_expression(reporter, ctx)?;
+    let expr = parse_expr(reporter, ctx)?;
     let success = ctx.check_and_skip_token(
         reporter,
         &TokenValue::Semicolon,
-        "Expected a ; after a expression statement",
+        "Expected a ; after a expr statement",
     );
 
     if success {
-        Ok(Statement::Expression(ExpressionStatement::new(expr)))
+        Ok(Stmt::Expr(ExprStmt::new(expr)))
     } else {
         Err(ParseError)
     }
 }
 
-fn parse_expression(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
+fn parse_expr(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
-    expression     → equality ;
+    expr     → equality ;
     */
 
     parse_equality(reporter, ctx)
 }
 
-fn parse_equality(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
+fn parse_equality(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     equality       → comparison ( ( "!=" | "==" ) comparison )* ;
     */
@@ -508,13 +508,13 @@ fn parse_equality(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<E
         let right_expr = parse_comparison(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary operator");
-        expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
+        expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
     }
 
     Ok(expr)
 }
 
-fn parse_comparison(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
+fn parse_comparison(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
     */
@@ -529,13 +529,13 @@ fn parse_comparison(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult
         let right_expr = parse_addition(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary comparison operator");
-        expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
+        expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
     }
 
     Ok(expr)
 }
 
-fn parse_addition(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
+fn parse_addition(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
     */
@@ -545,13 +545,13 @@ fn parse_addition(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<E
         let right_expr = parse_multiplication(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary plus or minus operator");
-        expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
+        expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
     }
 
     Ok(expr)
 }
 
-fn parse_multiplication(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
+fn parse_multiplication(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     multiplication → unary ( ( "/" | "*" ) unary )* ;
     */
@@ -561,13 +561,13 @@ fn parse_multiplication(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseRe
         let right_expr = parse_unary(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary multiply or divide operator");
-        expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
+        expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
     }
 
     Ok(expr)
 }
 
-fn parse_unary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
+fn parse_unary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     unary          → ( "!" | "-" ) unary
                    | primary ;
@@ -577,49 +577,45 @@ fn parse_unary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr
         let expr = parse_unary(reporter, ctx)?;
         let operator = UnaryOperator::try_from(operator_token.clone())
             .expect("Token should be a unary operator");
-        Ok(Expression::Unary(UnaryExpression::new(expr, operator)))
+        Ok(Expr::Unary(UnaryExpr::new(expr, operator)))
     } else {
         parse_primary(reporter, ctx)
     }
 }
 
-fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
+fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     primary        → NUMBER | STRING | "false" | "true" | "nil"
-                   | "(" expression ")" ;
+                   | "(" expr ")" ;
     */
 
     if let Some(token) = ctx.read_token() {
         match token.value() {
-            TokenValue::True => Ok(Expression::Literal(LiteralExpression::Boolean(true))),
-            TokenValue::False => Ok(Expression::Literal(LiteralExpression::Boolean(false))),
-            TokenValue::Nil => Ok(Expression::Literal(LiteralExpression::Nil)),
-            TokenValue::Number(number) => {
-                Ok(Expression::Literal(LiteralExpression::Number(*number)))
-            }
-            TokenValue::String(string) => Ok(Expression::Literal(LiteralExpression::String(
-                string.clone(),
-            ))),
+            TokenValue::True => Ok(Expr::Lit(LitExpr::Boolean(true))),
+            TokenValue::False => Ok(Expr::Lit(LitExpr::Boolean(false))),
+            TokenValue::Nil => Ok(Expr::Lit(LitExpr::Nil)),
+            TokenValue::Number(number) => Ok(Expr::Lit(LitExpr::Number(*number))),
+            TokenValue::String(string) => Ok(Expr::Lit(LitExpr::String(string.clone()))),
             TokenValue::LeftParen => {
-                let expr = parse_expression(reporter, ctx)?;
+                let expr = parse_expr(reporter, ctx)?;
                 let success = ctx.check_and_skip_token(
                     reporter,
                     &TokenValue::RightParen,
-                    "Expected ')' after expression",
+                    "Expected ')' after expr",
                 );
                 if success {
-                    Ok(Expression::Grouping(GroupingExpression::new(expr)))
+                    Ok(Expr::Group(GroupExpr::new(expr)))
                 } else {
                     Err(ParseError)
                 }
             }
             _ => {
-                reporter.report_compile_error_on_line("Expected expression", token.line());
+                reporter.report_compile_error_on_line("Expected expr", token.line());
                 Err(ParseError)
             }
         }
     } else {
-        reporter.report_compile_error("Expected expression");
+        reporter.report_compile_error("Expected expr");
         Err(ParseError)
     }
 }

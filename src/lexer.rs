@@ -200,8 +200,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                 if let Some(string) = ctx.read_string() {
                     Some(TokenValue::String(string))
                 } else {
-                    let message = format!("Unterminated string");
-                    reporter.report_compile_error_on_line(&message, ctx.curr_line);
+                    reporter.report_compile_error_on_line("Unterminated string", ctx.curr_line);
                     break;
                 }
             }
@@ -217,8 +216,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                 if let Some(number) = ctx.read_number(digit) {
                     Some(TokenValue::Number(number))
                 } else {
-                    let message = format!("Invalid number");
-                    reporter.report_compile_error_on_line(&message, ctx.curr_line);
+                    reporter.report_compile_error_on_line("Invalid number", ctx.curr_line);
                     break;
                 }
             }

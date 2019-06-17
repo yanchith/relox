@@ -1,7 +1,6 @@
 use std::io::{self, Write};
 
 use crate::interpreter::Interpreter;
-use crate::lexer::Token;
 use crate::reporter::Reporter;
 
 mod interpreter;
