@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::parser::{
-    BinaryExpression, BinaryOperator, Expression, GroupingExpression, LiteralExpression,
-    UnaryExpression, UnaryOperator,
+    BinaryExpression, BinaryOperator, Expression, GroupingExpression, LiteralExpression, Program,
+    Statement, UnaryExpression, UnaryOperator,
 };
 use crate::reporter::Reporter;
 
@@ -25,6 +25,8 @@ impl fmt::Display for Value {
     }
 }
 
+// TODO: rename to InterpretResult, InterpretError, etc..
+
 pub struct InterpreterError {
     pub kind: InterpreterErrorKind,
     // TODO: add token/span here
@@ -45,14 +47,55 @@ pub enum InterpreterErrorKind {
 
 pub type InterpreterResult<T> = Result<T, InterpreterError>;
 
-pub fn interpret(reporter: &mut Reporter, expression: &Expression) -> Option<Value> {
-    match evaluate_expression(expression) {
-        Ok(value) => Some(value),
-        Err(err) => {
-            match err.kind {
-                InterpreterErrorKind::TypeError => reporter.report_runtime_error("Type Error"),
+pub struct Interpreter;
+
+impl Interpreter {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn interpret(&self, reporter: &mut Reporter, program: &Program) -> Option<Value> {
+        let mut last_value = None;
+
+        for stmt in program.statements() {
+            last_value = self.interpret_statement(reporter, stmt);
+        }
+
+        last_value
+    }
+
+    fn interpret_statement(&self, reporter: &mut Reporter, stmt: &Statement) -> Option<Value> {
+        match stmt {
+            Statement::Expression(expr_stmt) => {
+                self.interpret_expression(reporter, expr_stmt.expression())
             }
-            None
+            Statement::Print(print_stmt) => {
+                match self.interpret_expression(reporter, print_stmt.expression()) {
+                    Some(value) => {
+                        println!("{}", value);
+                        Some(value)
+                    }
+                    None => None,
+                }
+            }
+        }
+    }
+
+    fn interpret_expression(
+        &self,
+        reporter: &mut Reporter,
+        expression: &Expression,
+    ) -> Option<Value> {
+        match evaluate_expression(expression) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                match err.kind {
+                    InterpreterErrorKind::TypeError => {
+                        reporter.report_runtime_error("Type Error");
+                    }
+                }
+                None
+            }
         }
     }
 }

@@ -1,5 +1,7 @@
 use std::io::{self, Write};
 
+use crate::interpreter::Interpreter;
+use crate::lexer::Token;
 use crate::reporter::Reporter;
 
 mod interpreter;
@@ -21,9 +23,10 @@ fn main() {
 }
 
 fn run_file(file_path: String) {
+    let mut interpreter = Interpreter::new();
     let mut reporter = Reporter::new();
     let buffer = std::fs::read_to_string(&file_path).expect("Failed to read file");
-    run(&mut reporter, &buffer);
+    run(&mut interpreter, &mut reporter, &buffer);
 
     let exit_status = if reporter.has_compile_error() {
         Some(65)
@@ -40,6 +43,7 @@ fn run_file(file_path: String) {
 }
 
 fn run_prompt() {
+    let mut interpreter = Interpreter::new();
     let mut reporter = Reporter::new();
     let mut buffer = String::new();
     let stdin = io::stdin();
@@ -57,22 +61,18 @@ fn run_prompt() {
             .read_line(&mut buffer)
             .expect("Failed to read from console");
 
-        run(&mut reporter, &buffer);
+        run(&mut interpreter, &mut reporter, &buffer);
         buffer.clear();
     }
 }
 
-fn run(reporter: &mut Reporter, script: &str) {
+fn run(interpreter: &mut Interpreter, reporter: &mut Reporter, script: &str) {
     let tokens = lexer::scan(reporter, script);
-    print!("Tokens: ");
-    for token in &tokens {
-        print!("{} ", token);
-    }
-    println!();
-    if let Some(ast) = parser::parse(reporter, &tokens) {
-        println!("Ast: {}", ast);
-        if let Some(value) = interpreter::interpret(reporter, &ast) {
-            println!("Value: {}", value);
+    if let Some(program) = parser::parse(reporter, &tokens) {
+        println!("{}", program);
+        if let Some(value) = interpreter.interpret(reporter, &program) {
+            println!("{}", value);
         }
     }
 }
+

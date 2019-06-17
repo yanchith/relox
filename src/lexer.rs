@@ -189,7 +189,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
             // Slash token and comments
             CHAR_SLASH => {
                 if let Some(CHAR_SLASH) = ctx.peek_char() {
-                    ctx.consume_until_eol();
+                    ctx.skip_current_line();
                     None
                 } else {
                     Some(TokenValue::Slash)
@@ -206,7 +206,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                 }
             }
 
-            CHAR_EOL => {
+            CHAR_NEWLINE => {
                 ctx.curr_line += 1;
                 None
             }
@@ -263,10 +263,10 @@ impl<'a> LexerCtx<'a> {
         }
     }
 
-    fn consume_until_eol(&mut self) {
+    fn skip_current_line(&mut self) {
         while let Some(c) = self.source.next() {
             self.curr_char += 1;
-            if c == CHAR_EOL {
+            if c == CHAR_NEWLINE {
                 self.curr_line += 1;
                 break;
             }
@@ -278,7 +278,7 @@ impl<'a> LexerCtx<'a> {
         let mut string_terminated = false;
         while let Some(c) = self.source.next() {
             self.curr_char += 1;
-            if c == CHAR_EOL {
+            if c == CHAR_NEWLINE {
                 self.curr_line += 1;
             }
 
@@ -394,7 +394,7 @@ const CHAR_GREATER: char = '>';
 
 const CHAR_DOUBLE_QUOTE: char = '"';
 
-const CHAR_EOL: char = '\n';
+const CHAR_NEWLINE: char = '\n';
 const CHAR_WHITESPACE: char = ' ';
 const CHAR_CARRIAGE_RETURN: char = '\r';
 const CHAR_TAB: char = '\t';

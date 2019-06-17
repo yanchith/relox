@@ -6,6 +6,126 @@ use std::slice;
 use crate::lexer::{Token, TokenValue};
 use crate::reporter::Reporter;
 
+/*
+
+GRAMMAR
+
+program   → statement* EOF ;
+
+statement → exprStmt
+          | printStmt ;
+
+exprStmt  → expression ";" ;
+printStmt → "print" expression ";" ;
+
+We express operator precedence in production rules. Equality has the
+weakest precedence, unary operators have the strongest.
+
+expression     → equality ;
+equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
+addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
+multiplication → unary ( ( "/" | "*" ) unary )* ;
+unary          → ( "!" | "-" ) unary
+               | primary ;
+primary        → NUMBER | STRING | "false" | "true" | "nil"
+               | "(" expression ")" ;
+
+ */
+
+// TODO: rename all occurences of expression -> expr and statement -> stmt
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Program {
+    statements: Vec<Statement>,
+}
+
+impl Program {
+    pub fn new(statements: Vec<Statement>) -> Self {
+        Self { statements }
+    }
+
+    pub fn statements(&self) -> &[Statement] {
+        &self.statements
+    }
+}
+
+impl fmt::Display for Program {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut first = true;
+        for statement in &self.statements {
+            if !first {
+                writeln!(f, "")?;
+            }
+            first = false;
+            write!(f, "{} ", statement)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Statement {
+    Expression(ExpressionStatement),
+    Print(PrintStatement),
+}
+
+impl fmt::Display for Statement {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Statement::Expression(expression) => expression.to_string(),
+                Statement::Print(print) => print.to_string(),
+            }
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpressionStatement {
+    expression: Expression,
+}
+
+impl ExpressionStatement {
+    pub fn new(expression: Expression) -> Self {
+        Self { expression }
+    }
+
+    pub fn expression(&self) -> &Expression {
+        &self.expression
+    }
+}
+
+impl fmt::Display for ExpressionStatement {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "(; {})", self.expression)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrintStatement {
+    expression: Expression,
+}
+
+impl PrintStatement {
+    pub fn new(expression: Expression) -> Self {
+        Self { expression }
+    }
+
+    pub fn expression(&self) -> &Expression {
+        &self.expression
+    }
+}
+
+impl fmt::Display for PrintStatement {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "(print {})", self.expression)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Literal(LiteralExpression),
@@ -220,7 +340,7 @@ impl fmt::Display for BinaryOperator {
             f,
             "{}",
             match self {
-                BinaryOperator::Equal => "=",
+                BinaryOperator::Equal => "==",
                 BinaryOperator::NotEqual => "!=",
                 BinaryOperator::Less => "<",
                 BinaryOperator::LessEqual => "<=",
@@ -235,28 +355,24 @@ impl fmt::Display for BinaryOperator {
     }
 }
 
-/*
-
-We express operator precedence in production rules. Equality has the
-weakest precedence, unary operators have the strongest.
-
-expression     → equality ;
-equality       → comparison ( ( "!=" | "==" ) comparison )* ;
-comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
-addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
-multiplication → unary ( ( "/" | "*" ) unary )* ;
-unary          → ( "!" | "-" ) unary
-               | primary ;
-primary        → NUMBER | STRING | "false" | "true" | "nil"
-               | "(" expression ")" ;
-
-*/
-
 pub struct ParseError;
 
-pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Expression> {
+pub type ParseResult<T> = Result<T, ParseError>;
+
+pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Program> {
     let mut ctx = ParserCtx::new(tokens);
-    parse_expression(reporter, &mut ctx).ok()
+
+    let mut statements = Vec::new();
+    while !ctx.is_at_end() {
+        match parse_statement(reporter, &mut ctx) {
+            Ok(statement) => statements.push(statement),
+            Err(err) => {
+                return None;
+            }
+        }
+    }
+
+    Some(Program::new(statements))
 }
 
 struct ParserCtx<'a> {
@@ -270,7 +386,15 @@ impl<'a> ParserCtx<'a> {
         }
     }
 
-    fn match_tokens(&mut self, token_values: &[TokenValue]) -> Option<Token> {
+    fn check_token(&mut self, token_value: &TokenValue) -> bool {
+        if let Some(token) = self.peek_token() {
+            token.value() == token_value
+        } else {
+            false
+        }
+    }
+
+    fn read_tokens(&mut self, token_values: &[TokenValue]) -> Option<Token> {
         for token_value in token_values {
             if self.check_token(token_value) {
                 return self.read_token();
@@ -278,14 +402,6 @@ impl<'a> ParserCtx<'a> {
         }
 
         None
-    }
-
-    fn check_token(&mut self, token_value: &TokenValue) -> bool {
-        if let Some(token) = self.peek_token() {
-            token.value() == token_value
-        } else {
-            false
-        }
     }
 
     fn read_token(&mut self) -> Option<Token> {
@@ -296,7 +412,7 @@ impl<'a> ParserCtx<'a> {
         self.tokens.peek().copied()
     }
 
-    fn consume(
+    fn check_and_skip_token(
         &mut self,
         reporter: &mut Reporter,
         token_value: &TokenValue,
@@ -316,27 +432,78 @@ impl<'a> ParserCtx<'a> {
 
         false
     }
+
+    fn is_at_end(&mut self) -> bool {
+        self.tokens.peek() == None
+    }
 }
 
-fn parse_expression(
+fn parse_statement(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Statement> {
+    /*
+    statement → exprStmt
+              | printStmt ;
+    */
+    if ctx.read_tokens(&[TokenValue::Print]).is_some() {
+        finish_parse_print_statement(reporter, ctx)
+    } else {
+        parse_expression_statement(reporter, ctx)
+    }
+}
+
+fn finish_parse_print_statement(
     reporter: &mut Reporter,
     ctx: &mut ParserCtx,
-) -> Result<Expression, ParseError> {
+) -> ParseResult<Statement> {
+    /*
+    printStmt → "print" expression ";" ;
+    */
+    let expr = parse_expression(reporter, ctx)?;
+    ctx.check_and_skip_token(
+        reporter,
+        &TokenValue::Semicolon,
+        "Expected a ; after a print statement",
+    );
+
+    Ok(Statement::Print(PrintStatement::new(expr)))
+}
+
+fn parse_expression_statement(
+    reporter: &mut Reporter,
+    ctx: &mut ParserCtx,
+) -> ParseResult<Statement> {
+    /*
+    exprStmt  → expression ";" ;
+    */
+    let expr = parse_expression(reporter, ctx)?;
+    let success = ctx.check_and_skip_token(
+        reporter,
+        &TokenValue::Semicolon,
+        "Expected a ; after a expression statement",
+    );
+
+    if success {
+        Ok(Statement::Expression(ExpressionStatement::new(expr)))
+    } else {
+        Err(ParseError)
+    }
+}
+
+fn parse_expression(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
     /*
     expression     → equality ;
-     */
+    */
 
     parse_equality(reporter, ctx)
 }
 
-fn parse_equality(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_equality(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
     /*
     equality       → comparison ( ( "!=" | "==" ) comparison )* ;
     */
 
     let mut expr = parse_comparison(reporter, ctx)?;
     while let Some(operator_token) =
-        ctx.match_tokens(&[TokenValue::BangEqual, TokenValue::EqualEqual])
+        ctx.read_tokens(&[TokenValue::BangEqual, TokenValue::EqualEqual])
     {
         let right_expr = parse_comparison(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
@@ -347,16 +514,13 @@ fn parse_equality(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expres
     Ok(expr)
 }
 
-fn parse_comparison(
-    reporter: &mut Reporter,
-    ctx: &mut ParserCtx,
-) -> Result<Expression, ParseError> {
+fn parse_comparison(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
     /*
     comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
     */
 
     let mut expr = parse_addition(reporter, ctx)?;
-    while let Some(operator_token) = ctx.match_tokens(&[
+    while let Some(operator_token) = ctx.read_tokens(&[
         TokenValue::Less,
         TokenValue::LessEqual,
         TokenValue::Greater,
@@ -371,13 +535,13 @@ fn parse_comparison(
     Ok(expr)
 }
 
-fn parse_addition(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_addition(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
     /*
     addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
     */
 
     let mut expr = parse_multiplication(reporter, ctx)?;
-    while let Some(operator_token) = ctx.match_tokens(&[TokenValue::Plus, TokenValue::Minus]) {
+    while let Some(operator_token) = ctx.read_tokens(&[TokenValue::Plus, TokenValue::Minus]) {
         let right_expr = parse_multiplication(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary plus or minus operator");
@@ -387,16 +551,13 @@ fn parse_addition(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expres
     Ok(expr)
 }
 
-fn parse_multiplication(
-    reporter: &mut Reporter,
-    ctx: &mut ParserCtx,
-) -> Result<Expression, ParseError> {
+fn parse_multiplication(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
     /*
     multiplication → unary ( ( "/" | "*" ) unary )* ;
     */
 
     let mut expr = parse_unary(reporter, ctx)?;
-    while let Some(operator_token) = ctx.match_tokens(&[TokenValue::Star, TokenValue::Slash]) {
+    while let Some(operator_token) = ctx.read_tokens(&[TokenValue::Star, TokenValue::Slash]) {
         let right_expr = parse_unary(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary multiply or divide operator");
@@ -406,13 +567,13 @@ fn parse_multiplication(
     Ok(expr)
 }
 
-fn parse_unary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_unary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
     /*
     unary          → ( "!" | "-" ) unary
                    | primary ;
     */
 
-    if let Some(operator_token) = ctx.match_tokens(&[TokenValue::Bang, TokenValue::Minus]) {
+    if let Some(operator_token) = ctx.read_tokens(&[TokenValue::Bang, TokenValue::Minus]) {
         let expr = parse_unary(reporter, ctx)?;
         let operator = UnaryOperator::try_from(operator_token.clone())
             .expect("Token should be a unary operator");
@@ -422,7 +583,7 @@ fn parse_unary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expressio
     }
 }
 
-fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expression, ParseError> {
+fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expression> {
     /*
     primary        → NUMBER | STRING | "false" | "true" | "nil"
                    | "(" expression ")" ;
@@ -441,7 +602,7 @@ fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Express
             ))),
             TokenValue::LeftParen => {
                 let expr = parse_expression(reporter, ctx)?;
-                let success = ctx.consume(
+                let success = ctx.check_and_skip_token(
                     reporter,
                     &TokenValue::RightParen,
                     "Expected ')' after expression",
