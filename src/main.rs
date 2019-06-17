@@ -2,6 +2,7 @@ use std::io::{self, Write};
 
 use crate::reporter::Reporter;
 
+mod interpreter;
 mod lexer;
 mod parser;
 mod reporter;
@@ -58,6 +59,8 @@ fn run(reporter: &mut Reporter, script: &str) {
     println!();
     if let Some(ast) = parser::parse(reporter, &tokens) {
         println!("Ast: {}", ast);
+        if let Some(value) = interpreter::interpret(reporter, &ast) {
+            println!("Value: {}", value);
+        }
     }
 }
-

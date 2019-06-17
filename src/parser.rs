@@ -63,6 +63,10 @@ impl GroupingExpression {
             expression: Box::new(expression),
         }
     }
+
+    pub fn expression(&self) -> &Expression {
+        &self.expression
+    }
 }
 
 impl fmt::Display for GroupingExpression {
@@ -83,6 +87,14 @@ impl UnaryExpression {
             expression: Box::new(expression),
             operator,
         }
+    }
+
+    pub fn expression(&self) -> &Expression {
+        &self.expression
+    }
+
+    pub fn operator(&self) -> UnaryOperator {
+        self.operator
     }
 }
 
@@ -107,6 +119,18 @@ impl BinaryExpression {
             operator,
         }
     }
+
+    pub fn left_expression(&self) -> &Expression {
+        &self.left_expression
+    }
+
+    pub fn right_expression(&self) -> &Expression {
+        &self.right_expression
+    }
+
+    pub fn operator(&self) -> BinaryOperator {
+        self.operator
+    }
 }
 
 impl fmt::Display for BinaryExpression {
@@ -114,7 +138,7 @@ impl fmt::Display for BinaryExpression {
         write!(
             f,
             "({} {} {})",
-            self.operator, self.right_expression, self.left_expression
+            self.operator, self.left_expression, self.right_expression
         )
     }
 }
@@ -417,7 +441,11 @@ fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Express
             ))),
             TokenValue::LeftParen => {
                 let expr = parse_expression(reporter, ctx)?;
-                let success = ctx.consume(reporter, &TokenValue::RightParen, "Expected ')' after expression");
+                let success = ctx.consume(
+                    reporter,
+                    &TokenValue::RightParen,
+                    "Expected ')' after expression",
+                );
                 if success {
                     Ok(Expression::Grouping(GroupingExpression::new(expr)))
                 } else {
