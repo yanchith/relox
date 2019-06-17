@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use crate::interpreter::Interpreter;
 use crate::reporter::Reporter;
 
+mod environment;
 mod interpreter;
 mod lexer;
 mod parser;

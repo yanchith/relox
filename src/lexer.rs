@@ -88,7 +88,7 @@ impl fmt::Display for TokenValue {
             f,
             "{}",
             match self {
-                // TODO: allocate less here (to_stirng())
+                // TODO: allocate less here (to_string())
                 TokenValue::LeftParen => "LEFT_PAREN".to_string(),
                 TokenValue::RightParen => "RIGHT_PAREN".to_string(),
                 TokenValue::LeftBrace => "LEFT_BRACE".to_string(),
