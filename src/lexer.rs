@@ -133,6 +133,7 @@ impl fmt::Display for TokenValue {
 }
 
 pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
+    // TODO: initialize only once, statically - either have it be a table
     let keyword_map = init_keyword_map();
     let mut ctx = LexerCtx::new(source);
     let mut tokens = Vec::new();
