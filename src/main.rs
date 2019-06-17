@@ -24,6 +24,19 @@ fn run_file(file_path: String) {
     let mut reporter = Reporter::new();
     let buffer = std::fs::read_to_string(&file_path).expect("Failed to read file");
     run(&mut reporter, &buffer);
+
+    let exit_status = if reporter.has_compile_error() {
+        Some(65)
+    } else if reporter.has_runtime_error() {
+        Some(70)
+    } else {
+        None
+    };
+
+    if let Some(status) = exit_status {
+        reporter.print_all_errors();
+        std::process::exit(status)
+    }
 }
 
 fn run_prompt() {
@@ -33,9 +46,8 @@ fn run_prompt() {
     let mut stdout = io::stdout();
 
     loop {
-        if reporter.has_error_reports() {
-            reporter.print_error_reports();
-            break;
+        if reporter.has_compile_error() || reporter.has_runtime_error() {
+            reporter.print_all_errors();
         }
 
         print!("> ");

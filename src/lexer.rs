@@ -200,7 +200,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     Some(TokenValue::String(string))
                 } else {
                     let message = format!("Unterminated string");
-                    reporter.report_on_line(&message, ctx.curr_line);
+                    reporter.report_compile_error_on_line(&message, ctx.curr_line);
                     break;
                 }
             }
@@ -217,7 +217,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     Some(TokenValue::Number(number))
                 } else {
                     let message = format!("Invalid number");
-                    reporter.report_on_line(&message, ctx.curr_line);
+                    reporter.report_compile_error_on_line(&message, ctx.curr_line);
                     break;
                 }
             }
@@ -234,7 +234,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
 
             unexpected => {
                 let message = format!("Unexpected character {}", unexpected);
-                reporter.report_on_line(&message, ctx.curr_line);
+                reporter.report_compile_error_on_line(&message, ctx.curr_line);
                 break;
             }
         };

@@ -308,10 +308,10 @@ impl<'a> ParserCtx<'a> {
         }
 
         if let Some(token) = self.peek_token() {
-            reporter.report_on_line(error_message, token.line());
+            reporter.report_compile_error_on_line(error_message, token.line());
         } else {
             // TODO: report correct span, maybe add back the EOF token
-            reporter.report(error_message);
+            reporter.report_compile_error(error_message);
         }
 
         false
@@ -364,7 +364,7 @@ fn parse_comparison(
     ]) {
         let right_expr = parse_addition(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
-            .expect("Token should be a binary operator");
+            .expect("Token should be a binary comparison operator");
         expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
     }
 
@@ -380,7 +380,7 @@ fn parse_addition(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Expres
     while let Some(operator_token) = ctx.match_tokens(&[TokenValue::Plus, TokenValue::Minus]) {
         let right_expr = parse_multiplication(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
-            .expect("Token should be a binary operator");
+            .expect("Token should be a binary plus or minus operator");
         expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
     }
 
@@ -399,7 +399,7 @@ fn parse_multiplication(
     while let Some(operator_token) = ctx.match_tokens(&[TokenValue::Star, TokenValue::Slash]) {
         let right_expr = parse_unary(reporter, ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
-            .expect("Token should be a binary operator");
+            .expect("Token should be a binary multiply or divide operator");
         expr = Expression::Binary(BinaryExpression::new(expr, right_expr, operator));
     }
 
@@ -453,12 +453,12 @@ fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> Result<Express
                 }
             }
             _ => {
-                reporter.report_on_line("Expected expression", token.line());
+                reporter.report_compile_error_on_line("Expected expression", token.line());
                 Err(ParseError)
             }
         }
     } else {
-        reporter.report("Expected expression");
+        reporter.report_compile_error("Expected expression");
         Err(ParseError)
     }
 }

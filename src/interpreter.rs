@@ -50,7 +50,7 @@ pub fn interpret(reporter: &mut Reporter, expression: &Expression) -> Option<Val
         Ok(value) => Some(value),
         Err(err) => {
             match err.kind {
-                InterpreterErrorKind::TypeError => reporter.report("Type Error"),
+                InterpreterErrorKind::TypeError => reporter.report_runtime_error("Type Error"),
             }
             None
         }
