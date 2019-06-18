@@ -81,7 +81,7 @@ pub enum TokenValue {
     LessEqual,
 
     // Literals
-    Identifier(String),
+    Ident(String),
     String(String),
     Number(f64),
 
@@ -130,7 +130,7 @@ impl fmt::Display for TokenValue {
                 TokenValue::GreaterEqual => "GREATER_EQUAKL".to_string(),
                 TokenValue::Less => "LESS".to_string(),
                 TokenValue::LessEqual => "LESS_EQUAL".to_string(),
-                TokenValue::Identifier(identifier) => format!("IDENTIFIER({})", identifier),
+                TokenValue::Ident(ident) => format!("IDENT({})", ident),
                 TokenValue::String(string) => format!("STRING({})", string),
                 TokenValue::Number(number) => format!("NUMBER({})", number),
                 TokenValue::And => "AND".to_string(),
@@ -255,13 +255,13 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
             }
 
             alpha if is_alpha(alpha) => {
-                let (identifier, identifier_span) = ctx.read_identifier_finish(alpha);
+                let (ident, ident_span) = ctx.read_ident_finish(alpha);
                 let token_value = keyword_map
-                    .get(&identifier)
+                    .get(&ident)
                     .cloned()
-                    .unwrap_or_else(|| TokenValue::Identifier(identifier));
+                    .unwrap_or_else(|| TokenValue::Ident(ident));
 
-                Some(Token::new(token_value, identifier_span))
+                Some(Token::new(token_value, ident_span))
             }
 
             unexpected => {
@@ -357,7 +357,7 @@ impl<'a> LexerCtx<'a> {
         }
     }
 
-    pub fn read_identifier_finish(&mut self, first_alpha: char) -> (String, Span) {
+    pub fn read_ident_finish(&mut self, first_alpha: char) -> (String, Span) {
         let char_start = self.curr_char - 1; // First char is already read
         let mut buffer = format!("{}", first_alpha);
 

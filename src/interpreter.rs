@@ -92,7 +92,7 @@ impl Interpreter {
 
                 // TODO: don't clone if possible....
                 self.environment
-                    .define(var_decl.identifier().to_string(), value.clone());
+                    .define(var_decl.ident().to_string(), value.clone());
 
                 Some(value)
             }
@@ -201,7 +201,7 @@ impl Interpreter {
     fn evaluate_var(&self, var: &VarExpr) -> InterpreterResult<Value> {
         // TODO: we are cloning strings left and right...
         self.environment
-            .get(var.identifier())
+            .get(var.ident())
             .cloned()
             .ok_or(InterpreterError::undeclared_variable_use())
     }

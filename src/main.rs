@@ -75,4 +75,3 @@ fn run(interpreter: &mut Interpreter, reporter: &mut Reporter, script: &str) {
         }
     }
 }
-

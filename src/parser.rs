@@ -136,20 +136,20 @@ impl fmt::Display for PrintStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VarDeclStmt {
-    identifier: String, // TODO: not string, plz
+    ident: String, // TODO: not string, plz
     initializer_expr: Option<Expr>,
 }
 
 impl VarDeclStmt {
-    pub fn new(identifier: String, initializer_expr: Option<Expr>) -> Self {
+    pub fn new(ident: String, initializer_expr: Option<Expr>) -> Self {
         Self {
-            identifier,
+            ident,
             initializer_expr,
         }
     }
 
-    pub fn identifier(&self) -> &str {
-        &self.identifier
+    pub fn ident(&self) -> &str {
+        &self.ident
     }
 
     pub fn initializer_expr(&self) -> Option<&Expr> {
@@ -160,8 +160,8 @@ impl VarDeclStmt {
 impl fmt::Display for VarDeclStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.initializer_expr {
-            Some(expr) => write!(f, "(decl {} {})", self.identifier, expr),
-            None => write!(f, "(decl {})", self.identifier),
+            Some(expr) => write!(f, "(decl {} {})", self.ident, expr),
+            None => write!(f, "(decl {})", self.ident),
         }
     }
 }
@@ -307,22 +307,22 @@ impl fmt::Display for BinaryExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VarExpr {
-    identifier: String,
+    ident: String,
 }
 
 impl VarExpr {
-    pub fn new(identifier: String) -> Self {
-        Self { identifier }
+    pub fn new(ident: String) -> Self {
+        Self { ident }
     }
 
-    pub fn identifier(&self) -> &str {
-        &self.identifier
+    pub fn ident(&self) -> &str {
+        &self.ident
     }
 }
 
 impl fmt::Display for VarExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.identifier)
+        write!(f, "{}", self.ident)
     }
 }
 
@@ -457,9 +457,9 @@ impl<'a> ParserCtx<'a> {
         }
     }
 
-    fn check_token_identifier(&mut self) -> bool {
+    fn check_token_ident(&mut self) -> bool {
         if let Some(token) = self.peek_token() {
-            if let TokenValue::Identifier(_) = token.value() {
+            if let TokenValue::Ident(_) = token.value() {
                 true
             } else {
                 false
@@ -486,8 +486,8 @@ impl<'a> ParserCtx<'a> {
         None
     }
 
-    fn read_token_if_identifier(&mut self) -> Option<Token> {
-        if self.check_token_identifier() {
+    fn read_token_if_ident(&mut self) -> Option<Token> {
+        if self.check_token_ident() {
             self.read_token()
         } else {
             None
@@ -522,7 +522,7 @@ fn parse_decl(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Stmt>
 }
 
 fn finish_parse_var_decl(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Stmt> {
-    if let Some(identifier_token) = ctx.read_token_if_identifier() {
+    if let Some(ident_token) = ctx.read_token_if_ident() {
         let mut initializer_expr = None;
 
         if ctx.read_token_if(&TokenValue::Equal).is_some() {
@@ -530,9 +530,9 @@ fn finish_parse_var_decl(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseR
         }
 
         if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
-            match identifier_token.value() {
-                TokenValue::Identifier(identifier) => Ok(Stmt::VarDecl(VarDeclStmt::new(
-                    identifier.to_string(),
+            match ident_token.value() {
+                TokenValue::Ident(ident) => Ok(Stmt::VarDecl(VarDeclStmt::new(
+                    ident.to_string(),
                     initializer_expr,
                 ))),
                 _ => unreachable!(),
@@ -714,7 +714,7 @@ fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Ex
             TokenValue::Number(number) => Ok(Expr::Lit(LitExpr::Number(*number))),
             TokenValue::String(string) => Ok(Expr::Lit(LitExpr::String(string.clone()))),
             // TODO: less string cloning, more string interning
-            TokenValue::Identifier(identifier) => Ok(Expr::Var(VarExpr::new(identifier.clone()))),
+            TokenValue::Ident(ident) => Ok(Expr::Var(VarExpr::new(ident.clone()))),
             TokenValue::LeftParen => {
                 let expr = parse_expr(reporter, ctx)?;
                 if ctx.read_token_if(&TokenValue::RightParen).is_some() {
