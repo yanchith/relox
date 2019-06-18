@@ -1,3 +1,5 @@
+use crate::lexer::Span;
+
 pub struct Reporter {
     compile_errors: Vec<ErrorReport>,
     runtime_error: Option<ErrorReport>,
@@ -24,11 +26,8 @@ impl Reporter {
         for report in &self.compile_errors {
             match report {
                 ErrorReport::Message(message) => eprintln!("Error: {}", message),
-                ErrorReport::MessageLine(message, line) => {
-                    eprintln!("Error on line {}: {}", line, message);
-                }
-                ErrorReport::MessageLinePlace(message, line, place) => {
-                    eprintln!("Error on line {} around {}: {}", line, place, message);
+                ErrorReport::MessageSpan(message, span) => {
+                    eprintln!("Error on line {}: {}", span.line_range.start, message);
                 }
             }
         }
@@ -37,11 +36,8 @@ impl Reporter {
         if let Some(report) = self.runtime_error.take() {
             match report {
                 ErrorReport::Message(message) => eprintln!("Error: {}", message),
-                ErrorReport::MessageLine(message, line) => {
-                    eprintln!("Error on line {}: {}", line, message);
-                }
-                ErrorReport::MessageLinePlace(message, line, place) => {
-                    eprintln!("Error on line {} around {}: {}", line, place, message);
+                ErrorReport::MessageSpan(message, span) => {
+                    eprintln!("Error on line {}: {}", span.line_range.start, message);
                 }
             }
         }
@@ -52,22 +48,9 @@ impl Reporter {
             .push(ErrorReport::Message(message.to_string()));
     }
 
-    pub fn report_compile_error_on_line(&mut self, message: &str, line: u32) {
+    pub fn report_compile_error_on_span(&mut self, message: &str, span: &Span) {
         self.compile_errors
-            .push(ErrorReport::MessageLine(message.to_string(), line));
-    }
-
-    pub fn report_compile_error_on_line_with_place(
-        &mut self,
-        message: &str,
-        line: u32,
-        place: &str,
-    ) {
-        self.compile_errors.push(ErrorReport::MessageLinePlace(
-            message.to_string(),
-            line,
-            place.to_string(),
-        ));
+            .push(ErrorReport::MessageSpan(message.to_string(), span.clone()));
     }
 
     pub fn report_runtime_error(&mut self, message: &str) {
@@ -78,6 +61,5 @@ impl Reporter {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum ErrorReport {
     Message(String),
-    MessageLine(String, u32),
-    MessageLinePlace(String, u32, String),
+    MessageSpan(String, Span),
 }

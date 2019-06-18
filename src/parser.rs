@@ -730,7 +730,7 @@ fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Ex
                 }
             }
             _ => {
-                reporter.report_compile_error_on_line("Expected expr", token.line());
+                reporter.report_compile_error_on_span("Expected expr", token.span());
                 Err(ParseError)
             }
         }
@@ -742,7 +742,7 @@ fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Ex
 
 fn report_token(reporter: &mut Reporter, maybe_token: Option<Token>, message: &str) {
     match maybe_token {
-        Some(token) => reporter.report_compile_error_on_line(message, token.line()),
+        Some(token) => reporter.report_compile_error_on_span(message, token.span()),
         None => reporter.report_compile_error(message),
     }
 }

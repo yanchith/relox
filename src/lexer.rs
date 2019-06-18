@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::f64;
 use std::fmt;
 use std::iter::Peekable;
+use std::ops::Range;
 use std::str::{Chars, FromStr};
 
 use crate::reporter::Reporter;
@@ -9,27 +10,48 @@ use crate::reporter::Reporter;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     value: TokenValue,
-    line: u32,
+    span: Span,
 }
 
 impl Token {
-    // TODO: replace line with Span
-    pub fn new(value: TokenValue, line: u32) -> Self {
-        Self { value, line }
+    pub fn new(value: TokenValue, span: Span) -> Self {
+        Self { value, span }
     }
 
     pub fn value(&self) -> &TokenValue {
         &self.value
     }
 
-    pub fn line(&self) -> u32 {
-        self.line
+    pub fn span(&self) -> &Span {
+        &self.span
     }
 }
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Span {
+    pub line_range: Range<u32>,
+    pub char_range: Range<u32>,
+}
+
+impl Span {
+    pub fn new(line_range: Range<u32>, char_range: Range<u32>) -> Self {
+        Self {
+            line_range,
+            char_range,
+        }
+    }
+
+    pub fn combine(left: &Self, right: &Self) -> Self {
+        Self {
+            line_range: left.line_range.start..right.line_range.end,
+            char_range: left.char_range.start..right.char_range.end,
+        }
     }
 }
 
@@ -138,108 +160,119 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
     let mut ctx = LexerCtx::new(source);
     let mut tokens = Vec::new();
 
-    while let Some(c) = ctx.read_char() {
+    while let Some((c, span)) = ctx.read_char() {
         let maybe_token = match c {
             // Always single character tokens
-            CHAR_LEFT_PAREN => Some(TokenValue::LeftParen),
-            CHAR_RIGHT_PAREN => Some(TokenValue::RightParen),
-            CHAR_LEFT_BRACE => Some(TokenValue::LeftBrace),
-            CHAR_RIGHT_BRACE => Some(TokenValue::RightBrace),
-            CHAR_COMMA => Some(TokenValue::Comma),
-            CHAR_DOT => Some(TokenValue::Dot),
-            CHAR_MINUS => Some(TokenValue::Minus),
-            CHAR_PLUS => Some(TokenValue::Plus),
-            CHAR_SEMICOLON => Some(TokenValue::Semicolon),
-            CHAR_STAR => Some(TokenValue::Star),
+            CHAR_LEFT_PAREN => Some(Token::new(TokenValue::LeftParen, span)),
+            CHAR_RIGHT_PAREN => Some(Token::new(TokenValue::RightParen, span)),
+            CHAR_LEFT_BRACE => Some(Token::new(TokenValue::LeftBrace, span)),
+            CHAR_RIGHT_BRACE => Some(Token::new(TokenValue::RightBrace, span)),
+            CHAR_COMMA => Some(Token::new(TokenValue::Comma, span)),
+            CHAR_DOT => Some(Token::new(TokenValue::Dot, span)),
+            CHAR_MINUS => Some(Token::new(TokenValue::Minus, span)),
+            CHAR_PLUS => Some(Token::new(TokenValue::Plus, span)),
+            CHAR_SEMICOLON => Some(Token::new(TokenValue::Semicolon, span)),
+            CHAR_STAR => Some(Token::new(TokenValue::Star, span)),
 
             // One or two character tokens
             CHAR_BANG => {
                 if let Some(CHAR_EQUAL) = ctx.peek_char() {
-                    ctx.read_char();
-                    Some(TokenValue::BangEqual)
+                    let (_, span_end) = ctx.read_char().unwrap();
+                    Some(Token::new(
+                        TokenValue::BangEqual,
+                        Span::combine(&span, &span_end),
+                    ))
                 } else {
-                    Some(TokenValue::Bang)
+                    Some(Token::new(TokenValue::Bang, span))
                 }
             }
             CHAR_EQUAL => {
                 if let Some(CHAR_EQUAL) = ctx.peek_char() {
-                    ctx.read_char();
-                    Some(TokenValue::EqualEqual)
+                    let (_, span_end) = ctx.read_char().unwrap();
+                    Some(Token::new(
+                        TokenValue::EqualEqual,
+                        Span::combine(&span, &span_end),
+                    ))
                 } else {
-                    Some(TokenValue::Equal)
+                    Some(Token::new(TokenValue::Equal, span))
                 }
             }
             CHAR_LESS => {
                 if let Some(CHAR_EQUAL) = ctx.peek_char() {
-                    ctx.read_char();
-                    Some(TokenValue::LessEqual)
+                    let (_, span_end) = ctx.read_char().unwrap();
+                    Some(Token::new(
+                        TokenValue::LessEqual,
+                        Span::combine(&span, &span_end),
+                    ))
                 } else {
-                    Some(TokenValue::Less)
+                    Some(Token::new(TokenValue::Less, span))
                 }
             }
             CHAR_GREATER => {
                 if let Some(CHAR_EQUAL) = ctx.peek_char() {
-                    ctx.read_char();
-                    Some(TokenValue::GreaterEqual)
+                    let (_, span_end) = ctx.read_char().unwrap();
+                    Some(Token::new(
+                        TokenValue::GreaterEqual,
+                        Span::combine(&span, &span_end),
+                    ))
                 } else {
-                    Some(TokenValue::Greater)
+                    Some(Token::new(TokenValue::Greater, span))
                 }
             }
 
             // Slash token and comments
             CHAR_SLASH => {
                 if let Some(CHAR_SLASH) = ctx.peek_char() {
-                    ctx.skip_current_line();
+                    ctx.read_line_finish();
                     None
                 } else {
-                    Some(TokenValue::Slash)
+                    Some(Token::new(TokenValue::Slash, span))
                 }
             }
 
             CHAR_DOUBLE_QUOTE => {
-                if let Some(string) = ctx.read_string() {
-                    Some(TokenValue::String(string))
+                if let Some((string, string_span)) = ctx.read_string_finish() {
+                    Some(Token::new(TokenValue::String(string), string_span))
                 } else {
-                    reporter.report_compile_error_on_line("Unterminated string", ctx.curr_line);
+                    // TODO: get span of unterminated string and report that!
+                    reporter.report_compile_error_on_span("Unterminated string", &span);
                     break;
                 }
             }
 
-            CHAR_NEWLINE => {
-                ctx.curr_line += 1;
-                None
-            }
+            CHAR_NEWLINE => None,
 
             CHAR_WHITESPACE | CHAR_CARRIAGE_RETURN | CHAR_TAB => None,
 
             digit if is_digit(digit) => {
-                if let Some(number) = ctx.read_number(digit) {
-                    Some(TokenValue::Number(number))
+                if let Some((number, number_span)) = ctx.read_number_finish(digit) {
+                    Some(Token::new(TokenValue::Number(number), number_span))
                 } else {
-                    reporter.report_compile_error_on_line("Invalid number", ctx.curr_line);
+                    // TODO: get span of number we were trying to parse and report that!
+                    reporter.report_compile_error_on_span("Invalid number", &span);
                     break;
                 }
             }
 
             alpha if is_alpha(alpha) => {
-                let identifier = ctx.read_identifier(alpha);
-                let token = keyword_map
+                let (identifier, identifier_span) = ctx.read_identifier_finish(alpha);
+                let token_value = keyword_map
                     .get(&identifier)
                     .cloned()
                     .unwrap_or_else(|| TokenValue::Identifier(identifier));
 
-                Some(token)
+                Some(Token::new(token_value, identifier_span))
             }
 
             unexpected => {
                 let message = format!("Unexpected character {}", unexpected);
-                reporter.report_compile_error_on_line(&message, ctx.curr_line);
+                reporter.report_compile_error_on_span(&message, &span);
                 break;
             }
         };
 
         if let Some(token) = maybe_token {
-            tokens.push(Token::new(token, ctx.curr_line));
+            tokens.push(token);
         }
     }
 
@@ -253,7 +286,7 @@ struct LexerCtx<'a> {
 }
 
 impl<'a> LexerCtx<'a> {
-    fn new(source: &'a str) -> Self {
+    pub fn new(source: &'a str) -> Self {
         Self {
             source: source.chars().peekable(),
             curr_char: 0,
@@ -261,7 +294,7 @@ impl<'a> LexerCtx<'a> {
         }
     }
 
-    fn skip_current_line(&mut self) {
+    pub fn read_line_finish(&mut self) {
         while let Some(c) = self.source.next() {
             self.curr_char += 1;
             if c == CHAR_NEWLINE {
@@ -271,7 +304,10 @@ impl<'a> LexerCtx<'a> {
         }
     }
 
-    fn read_string(&mut self) -> Option<String> {
+    pub fn read_string_finish(&mut self) -> Option<(String, Span)> {
+        let char_start = self.curr_char - 1; // First char (double quote) is already read
+        let line_start = self.curr_line; // Strings can be multiline, need to track where it started
+
         let mut buffer = String::new();
         let mut string_terminated = false;
         while let Some(c) = self.source.next() {
@@ -289,13 +325,15 @@ impl<'a> LexerCtx<'a> {
         }
 
         if string_terminated {
-            Some(buffer)
+            let span = Span::new(line_start..self.curr_line + 1, char_start..self.curr_char);
+            Some((buffer, span))
         } else {
             None
         }
     }
 
-    fn read_number(&mut self, first_digit: char) -> Option<f64> {
+    pub fn read_number_finish(&mut self, first_digit: char) -> Option<(f64, Span)> {
+        let char_start = self.curr_char - 1; // First char is already read
         let mut buffer = format!("{}", first_digit);
 
         // TODO: float parsing
@@ -308,10 +346,19 @@ impl<'a> LexerCtx<'a> {
             }
         }
 
-        f64::from_str(&buffer).ok()
+        if let Ok(number) = f64::from_str(&buffer) {
+            let span = Span::new(
+                self.curr_line..self.curr_line + 1,
+                char_start..self.curr_char,
+            );
+            Some((number, span))
+        } else {
+            None
+        }
     }
 
-    fn read_identifier(&mut self, first_alpha: char) -> String {
+    pub fn read_identifier_finish(&mut self, first_alpha: char) -> (String, Span) {
+        let char_start = self.curr_char - 1; // First char is already read
         let mut buffer = format!("{}", first_alpha);
 
         while let Some(maybe_alphanumeric) = self.peek_char() {
@@ -323,15 +370,30 @@ impl<'a> LexerCtx<'a> {
             }
         }
 
-        buffer
+        let span = Span::new(
+            self.curr_line..self.curr_line + 1,
+            char_start..self.curr_char,
+        );
+        (buffer, span)
     }
 
-    fn read_char(&mut self) -> Option<char> {
-        self.curr_char += 1;
-        self.source.next()
+    pub fn read_char(&mut self) -> Option<(char, Span)> {
+        if let Some(c) = self.source.next() {
+            let span = Span::new(
+                self.curr_line..self.curr_line + 1,
+                self.curr_char..self.curr_char + 1,
+            );
+            self.curr_char += 1;
+            if c == CHAR_NEWLINE {
+                self.curr_line += 1;
+            }
+            Some((c, span))
+        } else {
+            None
+        }
     }
 
-    fn peek_char(&mut self) -> Option<char> {
+    pub fn peek_char(&mut self) -> Option<char> {
         self.source.peek().copied()
     }
 }
