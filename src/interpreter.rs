@@ -26,34 +26,13 @@ impl fmt::Display for Value {
     }
 }
 
-// TODO: rename to InterpretResult, InterpretError, etc..
-
-pub struct InterpreterError {
-    pub kind: InterpreterErrorKind,
-    // TODO: add token/span here
-    // token: Token,
-}
-
-impl InterpreterError {
-    pub fn type_error() -> Self {
-        InterpreterError {
-            kind: InterpreterErrorKind::TypeError,
-        }
-    }
-
-    pub fn undeclared_variable_use() -> Self {
-        InterpreterError {
-            kind: InterpreterErrorKind::UndeclaredVariableUse,
-        }
-    }
-}
-
-pub enum InterpreterErrorKind {
+// TODO: add Token or Span info to this error
+pub enum InterpretError {
     TypeError,
     UndeclaredVariableUse,
 }
 
-pub type InterpreterResult<T> = Result<T, InterpreterError>;
+pub type InterpretResult<T> = Result<T, InterpretError>;
 
 pub struct Interpreter {
     environment: Environment,
@@ -102,21 +81,18 @@ impl Interpreter {
     fn interpret_expr(&self, reporter: &mut Reporter, expr: &Expr) -> Option<Value> {
         match self.evaluate_expr(expr) {
             Ok(value) => Some(value),
-            Err(err) => {
-                match err.kind {
-                    InterpreterErrorKind::TypeError => {
-                        reporter.report_runtime_error("Type Error");
-                    }
-                    InterpreterErrorKind::UndeclaredVariableUse => {
-                        reporter.report_runtime_error("Use of undeclared variable");
-                    }
-                }
+            Err(InterpretError::TypeError) => {
+                reporter.report_runtime_error("Type Error");
+                None
+            }
+            Err(InterpretError::UndeclaredVariableUse) => {
+                reporter.report_runtime_error("Use of undeclared variable");
                 None
             }
         }
     }
 
-    fn evaluate_expr(&self, expr: &Expr) -> InterpreterResult<Value> {
+    fn evaluate_expr(&self, expr: &Expr) -> InterpretResult<Value> {
         match expr {
             Expr::Lit(lit) => self.evaluate_lit(lit),
             Expr::Group(group) => self.evaluate_group(group),
@@ -126,7 +102,7 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_lit(&self, lit: &LitExpr) -> InterpreterResult<Value> {
+    fn evaluate_lit(&self, lit: &LitExpr) -> InterpretResult<Value> {
         let value = match lit {
             LitExpr::Number(number) => Value::Number(*number),
             // TODO: should this clone?
@@ -138,22 +114,22 @@ impl Interpreter {
         Ok(value)
     }
 
-    fn evaluate_group(&self, group: &GroupExpr) -> InterpreterResult<Value> {
+    fn evaluate_group(&self, group: &GroupExpr) -> InterpretResult<Value> {
         self.evaluate_expr(group.expr())
     }
 
-    fn evaluate_unary(&self, unary: &UnaryExpr) -> InterpreterResult<Value> {
+    fn evaluate_unary(&self, unary: &UnaryExpr) -> InterpretResult<Value> {
         let value = self.evaluate_expr(unary.expr())?;
         match unary.operator() {
             UnaryOperator::Minus => match &value {
                 Value::Number(number) => Ok(Value::Number(-number)),
-                _ => Err(InterpreterError::type_error()),
+                _ => Err(InterpretError::TypeError),
             },
             UnaryOperator::Not => Ok(Value::Boolean(!is_truthy(&value))),
         }
     }
 
-    fn evaluate_binary(&self, binary: &BinaryExpr) -> InterpreterResult<Value> {
+    fn evaluate_binary(&self, binary: &BinaryExpr) -> InterpretResult<Value> {
         let left_value = self.evaluate_expr(binary.left_expr())?;
         let right_value = self.evaluate_expr(binary.right_expr())?;
 
@@ -161,49 +137,50 @@ impl Interpreter {
             BinaryOperator::Plus => match (left_value, right_value) {
                 (Value::String(left), Value::String(right)) => Ok(Value::String(left + &right)),
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Number(left + right)),
-                _ => Err(InterpreterError::type_error()),
+                _ => Err(InterpretError::TypeError),
             },
             BinaryOperator::Minus => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Number(left - right)),
-                _ => Err(InterpreterError::type_error()),
+                _ => Err(InterpretError::TypeError),
             },
             BinaryOperator::Multiply => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Number(left * right)),
-                _ => Err(InterpreterError::type_error()),
+                _ => Err(InterpretError::TypeError),
             },
             BinaryOperator::Divide => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Number(left / right)),
-                _ => Err(InterpreterError::type_error()),
+                _ => Err(InterpretError::TypeError),
             },
             BinaryOperator::Greater => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Boolean(left > right)),
-                _ => Err(InterpreterError::type_error()),
+                _ => Err(InterpretError::TypeError),
             },
             BinaryOperator::GreaterEqual => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Boolean(left >= right)),
-                _ => Err(InterpreterError::type_error()),
+                _ => Err(InterpretError::TypeError),
             },
             BinaryOperator::Less => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Boolean(left < right)),
-                _ => Err(InterpreterError::type_error()),
+                _ => Err(InterpretError::TypeError),
             },
             BinaryOperator::LessEqual => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Boolean(left <= right)),
-                _ => Err(InterpreterError::type_error()),
+                _ => Err(InterpretError::TypeError),
             },
-            // Note: in Lox, NaN == NaN, but our implementation uses Rust
-            // and IEEE 754 semantics, where NaN != NaN
+            // Note: officially in Lox, NaN == NaN, but our
+            // implementation uses Rust and IEEE 754 semantics, where
+            // NaN != NaN
             BinaryOperator::Equal => Ok(Value::Boolean(left_value == right_value)),
             BinaryOperator::NotEqual => Ok(Value::Boolean(left_value != right_value)),
         }
     }
 
-    fn evaluate_var(&self, var: &VarExpr) -> InterpreterResult<Value> {
+    fn evaluate_var(&self, var: &VarExpr) -> InterpretResult<Value> {
         // TODO: we are cloning strings left and right...
         self.environment
             .get(var.ident())
             .cloned()
-            .ok_or(InterpreterError::undeclared_variable_use())
+            .ok_or(InterpretError::UndeclaredVariableUse)
     }
 }
 
