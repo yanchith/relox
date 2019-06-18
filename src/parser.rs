@@ -80,15 +80,11 @@ pub enum Stmt {
 
 impl fmt::Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Stmt::Expr(expr) => expr.to_string(),
-                Stmt::Print(print) => print.to_string(),
-                Stmt::VarDecl(decl) => decl.to_string(),
-            }
-        )
+        match self {
+            Stmt::Expr(expr) => write!(f, "{}", expr),
+            Stmt::Print(print) => write!(f, "{}", print),
+            Stmt::VarDecl(decl) => write!(f, "{}", decl),
+        }
     }
 }
 
@@ -177,17 +173,13 @@ pub enum Expr {
 
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Expr::Lit(lit) => lit.to_string(),
-                Expr::Group(group) => group.to_string(),
-                Expr::Unary(unary) => unary.to_string(),
-                Expr::Binary(binary) => binary.to_string(),
-                Expr::Var(var) => var.to_string(),
-            }
-        )
+        match self {
+            Expr::Lit(lit) => write!(f, "{}", lit),
+            Expr::Group(group) => write!(f, "{}", group),
+            Expr::Unary(unary) => write!(f, "{}", unary),
+            Expr::Binary(binary) => write!(f, "{}", binary),
+            Expr::Var(var) => write!(f, "{}", var),
+        }
     }
 }
 
@@ -201,16 +193,12 @@ pub enum LitExpr {
 
 impl fmt::Display for LitExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                LitExpr::Number(number) => number.to_string(),
-                LitExpr::String(string) => format!("\"{}\"", string),
-                LitExpr::Boolean(boolean) => boolean.to_string(),
-                LitExpr::Nil => "nil".to_string(),
-            }
-        )
+        match self {
+            LitExpr::Number(number) => write!(f, "{}", number),
+            LitExpr::String(string) => write!(f, "\"{}\"", string),
+            LitExpr::Boolean(boolean) => write!(f, "{}", boolean),
+            LitExpr::Nil => write!(f, "nil"),
+        }
     }
 }
 
