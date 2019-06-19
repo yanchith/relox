@@ -327,17 +327,52 @@ impl<'a> LexerCtx<'a> {
         }
     }
 
+    /// A number literal is a series of digits optionally followed by
+    /// a "." and one or more digits
     pub fn read_number_finish(&mut self, first_digit: char) -> Option<(f64, Span)> {
         let char_start = self.curr_char - 1; // First char is already read
         let mut buffer = format!("{}", first_digit);
 
-        // TODO: float parsing
-        while let Some(maybe_digit) = self.peek_char() {
+        // Read leading digits
+        while let Some(maybe_digit) = self.source.peek().copied() {
             if is_digit(maybe_digit) {
                 buffer.push(maybe_digit);
                 self.read_char();
             } else {
                 break;
+            }
+        }
+
+        // Try reading "." and the rest of the digits
+        if let Some(maybe_dot) = self.source.peek().copied() {
+            if maybe_dot == CHAR_DOT {
+                buffer.push(maybe_dot);
+                self.read_char();
+
+                let mut read_additional_digits = false;
+
+                while let Some(maybe_digit) = self.source.peek().copied() {
+                    if is_digit(maybe_digit) {
+                        buffer.push(maybe_digit);
+                        self.read_char();
+                        read_additional_digits = true;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Lox does not support leading or trailing dot in
+                // number literals. This is not a valid number
+                // literal, if we encountered no digits after ".".
+                // Also note: we have to error here, because we
+                // already consumed at least the "." from the input
+                // and would have to "return" it if we didn't match
+                // something. Fortunately there is nothing in Lox yet
+                // that would require us to recover (e.g. methods on
+                // numbers -> "4.sqrt()")
+                if !read_additional_digits {
+                    return None;
+                }
             }
         }
 
@@ -356,9 +391,9 @@ impl<'a> LexerCtx<'a> {
         let char_start = self.curr_char - 1; // First char is already read
         let mut buffer = format!("{}", first_alpha);
 
-        while let Some(maybe_alphanumeric) = self.peek_char() {
-            if is_alphanumeric(maybe_alphanumeric) {
-                buffer.push(maybe_alphanumeric);
+        while let Some(maybe_alphanumeric) = self.source.peek() {
+            if is_alphanumeric(*maybe_alphanumeric) {
+                buffer.push(*maybe_alphanumeric);
                 self.read_char();
             } else {
                 break;
