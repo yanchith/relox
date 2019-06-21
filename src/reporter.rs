@@ -1,9 +1,9 @@
-use crate::lexer::Span;
-
 pub struct Reporter {
-    compile_errors: Vec<ErrorReport>,
-    runtime_error: Option<ErrorReport>,
+    compile_errors: Vec<String>,
+    runtime_error: Option<String>,
 }
+
+// TODO: span reporting
 
 impl Reporter {
     pub fn new() -> Self {
@@ -23,43 +23,21 @@ impl Reporter {
 
     // TODO: just be able to get the reports, don't print them in here
     pub fn print_all_errors(&mut self) {
-        for report in &self.compile_errors {
-            match report {
-                ErrorReport::Message(message) => eprintln!("Error: {}", message),
-                ErrorReport::MessageSpan(message, span) => {
-                    eprintln!("Error on line {}: {}", span.line_range.start, message);
-                }
-            }
+        for message in &self.compile_errors {
+            eprintln!("Compile Error: {}", message);
         }
         self.compile_errors.clear();
 
-        if let Some(report) = self.runtime_error.take() {
-            match report {
-                ErrorReport::Message(message) => eprintln!("Error: {}", message),
-                ErrorReport::MessageSpan(message, span) => {
-                    eprintln!("Error on line {}: {}", span.line_range.start, message);
-                }
-            }
+        if let Some(message) = self.runtime_error.take() {
+            eprintln!("Runtime Error: {}", message);
         }
     }
 
-    pub fn report_compile_error(&mut self, message: &str) {
-        self.compile_errors
-            .push(ErrorReport::Message(message.to_string()));
+    pub fn report_compile_error(&mut self, message: String) {
+        self.compile_errors.push(message);
     }
 
-    pub fn report_compile_error_on_span(&mut self, message: &str, span: &Span) {
-        self.compile_errors
-            .push(ErrorReport::MessageSpan(message.to_string(), span.clone()));
+    pub fn report_runtime_error(&mut self, message: String) {
+        self.runtime_error = Some(message);
     }
-
-    pub fn report_runtime_error(&mut self, message: &str) {
-        self.runtime_error = Some(ErrorReport::Message(message.to_string()));
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum ErrorReport {
-    Message(String),
-    MessageSpan(String, Span),
 }

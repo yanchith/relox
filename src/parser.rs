@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::error;
 use std::fmt;
 use std::iter::Peekable;
 use std::slice;
@@ -406,24 +407,96 @@ impl fmt::Display for BinaryOperator {
     }
 }
 
-pub struct ParseError;
+// TODO: implement std::error:Error
+#[derive(Debug)]
+pub enum ParseError {
+    ExpectedSemicolonAfterExprStmt(Option<Token>),
+    ExpectedSemicolonAfterPrintStmt(Option<Token>),
+    ExpectedSemicolonAfterVarDeclStmt(Option<Token>),
+    ExpectedIdentAfterVarKeyword(Option<Token>),
+    ExpectedClosingParenAfterGroupExpr(Option<Token>),
+    ExpectedPrimaryExpr(Option<Token>),
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ParseError::ExpectedSemicolonAfterExprStmt(Some(token)) => write!(
+                f,
+                "Expected semicolon after expression statement but found token {}",
+                token,
+            ),
+            ParseError::ExpectedSemicolonAfterExprStmt(None) => write!(
+                f,
+                "Expected semicolon after expression statement but found end of input",
+            ),
+            ParseError::ExpectedSemicolonAfterPrintStmt(Some(token)) => write!(
+                f,
+                "Expected semicolon after print statement but found token {}",
+                token,
+            ),
+            ParseError::ExpectedSemicolonAfterPrintStmt(None) => write!(
+                f,
+                "Expected semicolon after print statement but found end of input",
+            ),
+            ParseError::ExpectedSemicolonAfterVarDeclStmt(Some(token)) => write!(
+                f,
+                "Expected semicolon after variable declaration statement but found token {}",
+                token,
+            ),
+            ParseError::ExpectedSemicolonAfterVarDeclStmt(None) => write!(
+                f,
+                "Expected semicolon after variable declaration statement but found end of input",
+            ),
+            ParseError::ExpectedIdentAfterVarKeyword(Some(token)) => write!(
+                f,
+                "Expected identifier after 'var' keyword but found token {}",
+                token,
+            ),
+            ParseError::ExpectedIdentAfterVarKeyword(None) => write!(
+                f,
+                "Expected identifier after 'var' keyword but found end of input",
+            ),
+            ParseError::ExpectedClosingParenAfterGroupExpr(Some(token)) => write!(
+                f,
+                "Expected closing parenthesis after group expression but found token {}",
+                token,
+            ),
+            ParseError::ExpectedClosingParenAfterGroupExpr(None) => write!(
+                f,
+                "Expected closing parenthesis after group expression but found end of input",
+            ),
+            ParseError::ExpectedPrimaryExpr(Some(token)) => {
+                write!(f, "Expected primary expression but found token {}", token,)
+            }
+            ParseError::ExpectedPrimaryExpr(None) => {
+                write!(f, "Expected primary expression but found end of input",)
+            }
+        }
+    }
+}
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
 pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Program> {
     let mut ctx = ParserCtx::new(tokens);
-
     let mut stmts = Vec::new();
+
     while ctx.has_more_tokens() {
-        match parse_decl(reporter, &mut ctx) {
+        match parse_decl(&mut ctx) {
             Ok(stmt) => stmts.push(stmt),
-            Err(_) => {
-                return None;
+            Err(err) => {
+                reporter.report_compile_error(err.to_string());
+                ctx.synchronize();
             }
         }
     }
 
-    Some(Program::new(stmts))
+    if reporter.has_compile_error() {
+        None
+    } else {
+        Some(Program::new(stmts))
+    }
 }
 
 struct ParserCtx<'a> {
@@ -493,29 +566,54 @@ impl<'a> ParserCtx<'a> {
     fn has_more_tokens(&mut self) -> bool {
         self.tokens.peek().is_some()
     }
+
+    pub fn synchronize(&mut self) {
+        while let Some(token) = self.tokens.next() {
+            // Just consumed a semicolon, the next statement can be meaningful
+            if let TokenValue::Semicolon = token.value() {
+                return;
+            }
+
+            // Will consume a keyword. What comes after can be meaningful
+            if let Some(next_token) = self.tokens.peek() {
+                match next_token.value() {
+                    TokenValue::Class
+                    | TokenValue::Fun
+                    | TokenValue::Var
+                    | TokenValue::For
+                    | TokenValue::If
+                    | TokenValue::While
+                    | TokenValue::Print
+                    | TokenValue::Return => {
+                        return;
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
 }
 
-fn parse_decl(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn parse_decl(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
     declaration → varDecl
                 | statement ;
     */
 
-    // TODO: synchronize on statements
     if ctx.read_token_if(&TokenValue::Var).is_some() {
-        finish_parse_var_decl(reporter, ctx)
+        finish_parse_var_decl(ctx)
     } else {
-        parse_stmt(reporter, ctx)
+        parse_stmt(ctx)
     }
 }
 
-fn finish_parse_var_decl(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn finish_parse_var_decl(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     if let Some(ident_token) = ctx.read_token_if_ident() {
-        let mut initializer_expr = None;
-
-        if ctx.read_token_if(&TokenValue::Equal).is_some() {
-            initializer_expr = Some(parse_expr(reporter, ctx)?);
-        }
+        let initializer_expr = if ctx.read_token_if(&TokenValue::Equal).is_some() {
+            Some(parse_expr(ctx)?)
+        } else {
+            None
+        };
 
         if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
             match ident_token.value() {
@@ -526,87 +624,75 @@ fn finish_parse_var_decl(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseR
                 _ => unreachable!(),
             }
         } else {
-            // TODO: won't this hurt synchronization?
-            report_token(
-                reporter,
-                ctx.read_token(),
-                "Expected a ; after variable declarationr",
-            );
-            Err(ParseError)
+            Err(ParseError::ExpectedSemicolonAfterVarDeclStmt(
+                ctx.peek_token().cloned(),
+            ))
         }
     } else {
-        // TODO: won't this hurt synchronization?
-        report_token(reporter, ctx.read_token(), "Expected variable identifier");
-        Err(ParseError)
+        Err(ParseError::ExpectedIdentAfterVarKeyword(
+            ctx.peek_token().cloned(),
+        ))
     }
 }
 
-fn parse_stmt(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn parse_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
     statement → exprStmt
               | printStmt ;
     */
     if ctx.read_token_if(&TokenValue::Print).is_some() {
-        finish_parse_print_stmt(reporter, ctx)
+        finish_parse_print_stmt(ctx)
     } else {
-        parse_expr_stmt(reporter, ctx)
+        parse_expr_stmt(ctx)
     }
 }
 
-fn finish_parse_print_stmt(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn finish_parse_print_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
     printStmt → "print" expr ";" ;
     */
-    let expr = parse_expr(reporter, ctx)?;
+    let expr = parse_expr(ctx)?;
     if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
         Ok(Stmt::Print(PrintStmt::new(expr)))
     } else {
-        report_token(
-            reporter,
-            // TODO: won't this hurt synchronization?
-            ctx.read_token(),
-            "Expected a ; after print statement",
-        );
-        Err(ParseError)
+        Err(ParseError::ExpectedSemicolonAfterPrintStmt(
+            ctx.peek_token().cloned(),
+        ))
     }
 }
 
-fn parse_expr_stmt(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn parse_expr_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
     exprStmt  → expr ";" ;
     */
-    let expr = parse_expr(reporter, ctx)?;
+    let expr = parse_expr(ctx)?;
     if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
         Ok(Stmt::Expr(ExprStmt::new(expr)))
     } else {
-        report_token(
-            reporter,
-            // TODO: won't this hurt synchronization?
-            ctx.read_token(),
-            "Expectex a ; after expression stmt",
-        );
-        Err(ParseError)
+        Err(ParseError::ExpectedSemicolonAfterExprStmt(
+            ctx.peek_token().cloned(),
+        ))
     }
 }
 
-fn parse_expr(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_expr(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     expr     → equality ;
     */
 
-    parse_equality(reporter, ctx)
+    parse_equality(ctx)
 }
 
-fn parse_equality(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_equality(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     equality       → comparison ( ( "!=" | "==" ) comparison )* ;
     */
 
-    let mut expr = parse_comparison(reporter, ctx)?;
+    let mut expr = parse_comparison(ctx)?;
     while let Some(operator_token) =
         ctx.read_token_if_any_of(&[TokenValue::BangEqual, TokenValue::EqualEqual])
     {
-        let right_expr = parse_comparison(reporter, ctx)?;
+        let right_expr = parse_comparison(ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary operator");
         expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
@@ -615,19 +701,19 @@ fn parse_equality(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<E
     Ok(expr)
 }
 
-fn parse_comparison(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_comparison(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
     */
 
-    let mut expr = parse_addition(reporter, ctx)?;
+    let mut expr = parse_addition(ctx)?;
     while let Some(operator_token) = ctx.read_token_if_any_of(&[
         TokenValue::Less,
         TokenValue::LessEqual,
         TokenValue::Greater,
         TokenValue::GreaterEqual,
     ]) {
-        let right_expr = parse_addition(reporter, ctx)?;
+        let right_expr = parse_addition(ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary comparison operator");
         expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
@@ -636,16 +722,16 @@ fn parse_comparison(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult
     Ok(expr)
 }
 
-fn parse_addition(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_addition(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
     */
 
-    let mut expr = parse_multiplication(reporter, ctx)?;
+    let mut expr = parse_multiplication(ctx)?;
     while let Some(operator_token) =
         ctx.read_token_if_any_of(&[TokenValue::Plus, TokenValue::Minus])
     {
-        let right_expr = parse_multiplication(reporter, ctx)?;
+        let right_expr = parse_multiplication(ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary plus or minus operator");
         expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
@@ -654,16 +740,16 @@ fn parse_addition(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<E
     Ok(expr)
 }
 
-fn parse_multiplication(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_multiplication(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     multiplication → unary ( ( "/" | "*" ) unary )* ;
     */
 
-    let mut expr = parse_unary(reporter, ctx)?;
+    let mut expr = parse_unary(ctx)?;
     while let Some(operator_token) =
         ctx.read_token_if_any_of(&[TokenValue::Star, TokenValue::Slash])
     {
-        let right_expr = parse_unary(reporter, ctx)?;
+        let right_expr = parse_unary(ctx)?;
         let operator = BinaryOperator::try_from(operator_token.clone())
             .expect("Token should be a binary multiply or divide operator");
         expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
@@ -672,23 +758,23 @@ fn parse_multiplication(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseRe
     Ok(expr)
 }
 
-fn parse_unary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_unary(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     unary          → ( "!" | "-" ) unary
                    | primary ;
     */
 
     if let Some(operator_token) = ctx.read_token_if_any_of(&[TokenValue::Bang, TokenValue::Minus]) {
-        let expr = parse_unary(reporter, ctx)?;
+        let expr = parse_unary(ctx)?;
         let operator = UnaryOperator::try_from(operator_token.clone())
             .expect("Token should be a unary operator");
         Ok(Expr::Unary(UnaryExpr::new(expr, operator)))
     } else {
-        parse_primary(reporter, ctx)
+        parse_primary(ctx)
     }
 }
 
-fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_primary(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
     primary        → NUMBER | STRING | "false" | "true" | "nil"
                    | "(" expr ")" ;
@@ -704,33 +790,18 @@ fn parse_primary(reporter: &mut Reporter, ctx: &mut ParserCtx) -> ParseResult<Ex
             // TODO: less string cloning, more string interning
             TokenValue::Ident(ident) => Ok(Expr::Var(VarExpr::new(ident.clone()))),
             TokenValue::LeftParen => {
-                let expr = parse_expr(reporter, ctx)?;
+                let expr = parse_expr(ctx)?;
                 if ctx.read_token_if(&TokenValue::RightParen).is_some() {
                     Ok(Expr::Group(GroupExpr::new(expr)))
                 } else {
-                    report_token(
-                        reporter,
-                        // TODO: won't this hurt synchronization?
-                        ctx.read_token(),
-                        "Expected a ')' after expression",
-                    );
-                    Err(ParseError)
+                    Err(ParseError::ExpectedClosingParenAfterGroupExpr(
+                        ctx.peek_token().cloned(),
+                    ))
                 }
             }
-            _ => {
-                reporter.report_compile_error_on_span("Expected expr", token.span());
-                Err(ParseError)
-            }
+            _ => Err(ParseError::ExpectedPrimaryExpr(Some(token))),
         }
     } else {
-        reporter.report_compile_error("Expected expr");
-        Err(ParseError)
-    }
-}
-
-fn report_token(reporter: &mut Reporter, maybe_token: Option<Token>, message: &str) {
-    match maybe_token {
-        Some(token) => reporter.report_compile_error_on_span(message, token.span()),
-        None => reporter.report_compile_error(message),
+        Err(ParseError::ExpectedPrimaryExpr(None))
     }
 }

@@ -149,8 +149,11 @@ impl fmt::Display for TokenValue {
     }
 }
 
+// TODO: return a result and add a error type
+
 pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
-    // TODO: initialize only once, statically - either have it be a table
+    // TODO: initialize only once, statically - doesn't necessarily
+    // have to be a hash table
     let keyword_map = init_keyword_map();
     let mut ctx = LexerCtx::new(source);
     let mut tokens = Vec::new();
@@ -230,7 +233,10 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     Some(Token::new(TokenValue::String(string), string_span))
                 } else {
                     // TODO: get span of unterminated string and report that!
-                    reporter.report_compile_error_on_span("Unterminated string", &span);
+                    reporter.report_compile_error(format!(
+                        "Unterminated string starting on line: {}",
+                        span.line_range.start,
+                    ));
                     break;
                 }
             }
@@ -244,7 +250,10 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     Some(Token::new(TokenValue::Number(number), number_span))
                 } else {
                     // TODO: get span of number we were trying to parse and report that!
-                    reporter.report_compile_error_on_span("Invalid number", &span);
+                    reporter.report_compile_error(format!(
+                        "Invalid number on line: {}",
+                        span.line_range.start,
+                    ));
                     break;
                 }
             }
@@ -260,8 +269,10 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
             }
 
             unexpected => {
-                let message = format!("Unexpected character {}", unexpected);
-                reporter.report_compile_error_on_span(&message, &span);
+                reporter.report_compile_error(format!(
+                    "Unexpected character {} on line {}",
+                    unexpected, span.line_range.start
+                ));
                 break;
             }
         };
@@ -409,14 +420,14 @@ impl<'a> LexerCtx<'a> {
 
     pub fn read_char(&mut self) -> Option<(char, Span)> {
         if let Some(c) = self.source.next() {
-            let span = Span::new(
-                self.curr_line..self.curr_line + 1,
-                self.curr_char..self.curr_char + 1,
-            );
+            let char_start = self.curr_char;
+            let line_start = self.curr_line;
             self.curr_char += 1;
             if c == CHAR_NEWLINE {
                 self.curr_line += 1;
             }
+            let span = Span::new(line_start..self.curr_line, char_start..self.curr_char);
+
             Some((c, span))
         } else {
             None

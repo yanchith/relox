@@ -27,6 +27,9 @@ impl fmt::Display for Value {
 }
 
 // TODO: add Token or Span info to this error
+// TODO: implement std::error:Error
+// TODO: implement std::fmt::Display
+#[derive(Debug)]
 pub enum InterpretError {
     TypeError,
     UndeclaredVariableUse,
@@ -82,11 +85,11 @@ impl Interpreter {
         match self.evaluate_expr(expr) {
             Ok(value) => Some(value),
             Err(InterpretError::TypeError) => {
-                reporter.report_runtime_error("Type Error");
+                reporter.report_runtime_error("Type Error".to_string());
                 None
             }
             Err(InterpretError::UndeclaredVariableUse) => {
-                reporter.report_runtime_error("Use of undeclared variable");
+                reporter.report_runtime_error("Use of undeclared variable".to_string());
                 None
             }
         }
