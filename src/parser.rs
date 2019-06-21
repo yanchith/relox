@@ -1,5 +1,4 @@
 use std::convert::TryFrom;
-use std::error;
 use std::fmt;
 use std::iter::Peekable;
 use std::slice;
@@ -568,16 +567,15 @@ impl<'a> ParserCtx<'a> {
     }
 
     pub fn synchronize(&mut self) {
-        while let Some(token) = self.tokens.next() {
-            // Just consumed a semicolon, the next statement can be meaningful
-            if let TokenValue::Semicolon = token.value() {
-                return;
-            }
-
-            // Will consume a keyword. What comes after can be meaningful
-            if let Some(next_token) = self.tokens.peek() {
-                match next_token.value() {
-                    TokenValue::Class
+        while let Some(token) = self.tokens.peek() {
+            match token.value() {
+                TokenValue::Semicolon => {
+                    // Next token is semicolon, consume that and the next
+                    // statement can be meaningful
+                    self.tokens.next();
+                    return;
+                }
+                TokenValue::Class
                     | TokenValue::Fun
                     | TokenValue::Var
                     | TokenValue::For
@@ -585,11 +583,13 @@ impl<'a> ParserCtx<'a> {
                     | TokenValue::While
                     | TokenValue::Print
                     | TokenValue::Return => {
+                        // Next token is a keyword. What comes after can be meaningful.
                         return;
                     }
-                    _ => (),
-                }
+                _ => (),
             }
+
+            self.tokens.next();
         }
     }
 }
