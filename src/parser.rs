@@ -132,7 +132,7 @@ impl fmt::Display for PrintStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VarDeclStmt {
-    ident: String, // TODO: not string, plz
+    ident: String, // TODO: intern idents
     initializer_expr: Option<Expr>,
 }
 
@@ -787,7 +787,7 @@ fn parse_primary(ctx: &mut ParserCtx) -> ParseResult<Expr> {
             TokenValue::Nil => Ok(Expr::Lit(LitExpr::Nil)),
             TokenValue::Number(number) => Ok(Expr::Lit(LitExpr::Number(*number))),
             TokenValue::String(string) => Ok(Expr::Lit(LitExpr::String(string.clone()))),
-            // TODO: less string cloning, more string interning
+            // TODO: intern ident
             TokenValue::Ident(ident) => Ok(Expr::Var(VarExpr::new(ident.clone()))),
             TokenValue::LeftParen => {
                 let expr = parse_expr(ctx)?;

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::rc::Rc;
 
 use crate::environment::Environment;
 use crate::parser::{
@@ -7,11 +8,21 @@ use crate::parser::{
 };
 use crate::reporter::Reporter;
 
+/// A Lox Value.
+///
+/// Since we don't really have a garbage collector, heap allocated
+/// values are behind an `Rc` pointer as a poor man's GC. This also
+/// means that cloning a value is always cheap.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
+    /// A 64-bit floating point number.
     Number(f64),
-    String(String),
+    /// A heap allocated string, stored behind an `Rc` pointer, the
+    /// string is not mutable, so no `RefCell` is used to contain it.
+    String(Rc<String>),
+    /// An 8-bit boolean.
     Boolean(bool),
+    /// The `Nil` singleton value, only equal to itself.
     Nil,
 }
 
@@ -72,7 +83,7 @@ impl Interpreter {
                     None => Value::Nil,
                 };
 
-                // TODO: don't clone if possible....
+                // TODO: intern idents to prevent cloning
                 self.environment
                     .define(var_decl.ident().to_string(), value.clone());
 
@@ -108,8 +119,15 @@ impl Interpreter {
     fn evaluate_lit(&self, lit: &LitExpr) -> InterpretResult<Value> {
         let value = match lit {
             LitExpr::Number(number) => Value::Number(*number),
-            // TODO: should this clone?
-            LitExpr::String(string) => Value::String(string.clone()),
+            // We clone the string from the AST, as we may be
+            // instantiating it multiple times and we don't want the
+            // instances to share storage (even though we currently
+            // don't support mutation on strings).
+            // TODO: optimize this... if we decide never to mutate
+            // strings, we can put the string in the token/ast in an
+            // Rc as well, otherwise we can maybe clone on write (Cow)
+            // instead?
+            LitExpr::String(string) => Value::String(Rc::new(string.clone())),
             LitExpr::Boolean(boolean) => Value::Boolean(*boolean),
             LitExpr::Nil => Value::Nil,
         };
@@ -138,7 +156,12 @@ impl Interpreter {
 
         match binary.operator() {
             BinaryOperator::Plus => match (left_value, right_value) {
-                (Value::String(left), Value::String(right)) => Ok(Value::String(left + &right)),
+                (Value::String(left), Value::String(right)) => {
+                    let mut result: String = String::with_capacity(left.len() + right.len());
+                    result.push_str(&left);
+                    result.push_str(&right);
+                    Ok(Value::String(Rc::new(result)))
+                }
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Number(left + right)),
                 _ => Err(InterpretError::TypeError),
             },
@@ -179,7 +202,6 @@ impl Interpreter {
     }
 
     fn evaluate_var(&self, var: &VarExpr) -> InterpretResult<Value> {
-        // TODO: we are cloning strings left and right...
         self.environment
             .get(var.ident())
             .cloned()

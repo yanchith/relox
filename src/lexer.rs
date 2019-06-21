@@ -159,8 +159,6 @@ impl fmt::Display for TokenValue {
 // TODO: return a result and add a error type
 
 pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
-    // TODO: initialize only once, statically - doesn't necessarily
-    // have to be a hash table
     let mut ctx = LexerCtx::new(source);
     let mut tokens = Vec::new();
 
@@ -321,9 +319,9 @@ impl<'a> LexerCtx<'a> {
         let line_start = self.curr_line; // Strings can be multiline, need to track where it started
 
         // TODO: track this properly... The string could have started
-        // as the last character of the previous line saturating_sub()
-        // is used as the string could have started on the previour
-        // line, meaning unchecked sub would underflow here.
+        // as the last character of the previous
+        // line. `saturating_sub()` is used to prevent underflow if it
+        // did.
         let column_start = self.curr_column.saturating_sub(1);
 
         let mut buffer = String::new();
