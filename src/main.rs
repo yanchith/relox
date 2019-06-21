@@ -70,8 +70,6 @@ fn run(interpreter: &mut Interpreter, reporter: &mut Reporter, script: &str) {
     let tokens = lexer::scan(reporter, script);
     if let Some(program) = parser::parse(reporter, &tokens) {
         println!("{}", program);
-        if let Some(value) = interpreter.interpret(reporter, &program) {
-            println!("{}", value);
-        }
+        interpreter.interpret(reporter, &program);
     }
 }

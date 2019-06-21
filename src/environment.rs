@@ -8,6 +8,7 @@ pub enum AssignError {
 }
 
 pub struct Environment {
+    parent: Option<Box<Environment>>,
     // TODO: intern idents!
     values: HashMap<String, Value>,
 }
@@ -15,7 +16,23 @@ pub struct Environment {
 impl Environment {
     pub fn new() -> Self {
         Self {
+            parent: None,
             values: HashMap::new(),
+        }
+    }
+
+    pub fn with_parent(parent: Self) -> Self {
+        Self {
+            parent: Some(Box::new(parent)),
+            values: HashMap::new(),
+        }
+    }
+
+    pub fn into_parent(self) -> Option<Self> {
+        if let Some(parent) = self.parent {
+            Some(*parent)
+        } else {
+            None
         }
     }
 
@@ -27,12 +44,18 @@ impl Environment {
         if let Some(value) = self.values.get_mut(ident) {
             *value = new_value;
             Ok(())
+        } else if let Some(parent) = &mut self.parent {
+            parent.assign(ident, new_value)
         } else {
             Err(AssignError::ValueNotDeclared)
         }
     }
 
     pub fn get(&self, ident: &str) -> Option<&Value> {
-        self.values.get(ident)
+        self.values.get(ident).or_else(|| if let Some(parent) = &self.parent {
+            parent.get(ident)
+        } else {
+            None
+        })
     }
 }

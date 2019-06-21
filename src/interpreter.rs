@@ -37,93 +37,142 @@ impl fmt::Display for Value {
     }
 }
 
-// TODO: add Token/Span/ident info
+// TODO: add Token/Span info
 // TODO: implement std::error:Error
 // TODO: implement std::fmt::Display
 #[derive(Debug)]
 pub enum InterpretError {
     TypeError,
-    UndeclaredVariableUse,
+    UndeclaredVariableUse, // TODO: add variable name
     UndeclaredVariableAssignment(String),
+}
+
+impl fmt::Display for InterpretError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            InterpretError::TypeError => write!(f, "Type Error"),
+            InterpretError::UndeclaredVariableUse => write!(f, "Use of undeclared variable"),
+            InterpretError::UndeclaredVariableAssignment(ident) => {
+                write!(f, "Assignment to undeclared variable {}", ident,)
+            }
+        }
+    }
 }
 
 pub type InterpretResult<T> = Result<T, InterpretError>;
 
 pub struct Interpreter {
-    environment: Environment,
+    // Even thogh this is an `Option`, one should never observe `None`
+    // here outside of `push_env()` and `pop_env()`
+    environment: Option<Environment>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         Self {
-            environment: Environment::new(),
+            environment: Some(Environment::new()),
         }
     }
 
-    pub fn interpret(&mut self, reporter: &mut Reporter, program: &Program) -> Option<Value> {
-        let mut last_value = None;
-
+    pub fn interpret(&mut self, reporter: &mut Reporter, program: &Program) {
         for stmt in program.stmts() {
-            last_value = self.interpret_stmt(reporter, stmt);
+            match self.interpret_stmt(stmt) {
+                Ok(Value::Nil) => (),
+                Ok(value) => println!("{}", value),
+                Err(err) => {
+                    reporter.report_runtime_error(err.to_string());
+                    break;
+                }
+            }
         }
 
-        last_value
+        if reporter.has_runtime_error() {
+            reporter.print_all_errors();
+        }
     }
 
-    fn interpret_stmt(&mut self, reporter: &mut Reporter, stmt: &Stmt) -> Option<Value> {
+    fn interpret_stmt(&mut self, stmt: &Stmt) -> InterpretResult<Value> {
         match stmt {
-            Stmt::Expr(expr_stmt) => self.interpret_expr(reporter, expr_stmt.expr()),
+            Stmt::Expr(expr_stmt) => self.eval_expr(expr_stmt.expr()),
             Stmt::Print(print_stmt) => {
-                let value = self.interpret_expr(reporter, print_stmt.expr())?;
+                let value = self.eval_expr(print_stmt.expr())?;
                 println!("{}", value);
-                Some(value)
+
+                Ok(Value::Nil)
             }
             Stmt::VarDecl(var_decl) => {
                 let value = match var_decl.initializer_expr() {
-                    Some(expr) => self.interpret_expr(reporter, expr)?,
+                    Some(expr) => self.eval_expr(expr)?,
                     None => Value::Nil,
                 };
 
                 // TODO: intern idents to prevent cloning
                 self.environment
-                    .define(var_decl.ident().to_string(), value.clone());
+                    .as_mut()
+                    .expect("Environment must be present at all times")
+                    .define(var_decl.ident().to_string(), value);
 
-                Some(value)
+                Ok(Value::Nil)
+            }
+            Stmt::Block(block) => {
+                let mut error = None;
+
+                self.push_env();
+
+                for stmt in block.stmts() {
+                    // Even if this errors, we can not unwind without
+                    // cleaning up the environment! Therefore we store
+                    // the error, perform the cleanup, and only
+                    // afterwards return the error.
+                    if let Err(err) = self.interpret_stmt(stmt) {
+                        error = Some(err);
+                        break;
+                    }
+                }
+
+                self.pop_env();
+
+                if let Some(err) = error {
+                    Err(err)
+                } else {
+                    Ok(Value::Nil)
+                }
             }
         }
     }
 
-    fn interpret_expr(&mut self, reporter: &mut Reporter, expr: &Expr) -> Option<Value> {
-        match self.evaluate_expr(expr) {
-            Ok(value) => Some(value),
-            Err(InterpretError::TypeError) => {
-                reporter.report_runtime_error("Type Error".to_string());
-                None
-            }
-            Err(InterpretError::UndeclaredVariableUse) => {
-                reporter.report_runtime_error("Use of undeclared variable".to_string());
-                None
-            }
-            Err(InterpretError::UndeclaredVariableAssignment(ident)) => {
-                reporter
-                    .report_runtime_error(format!("Assignment to undeclared variable {}", ident));
-                None
-            }
-        }
+    fn push_env(&mut self) {
+        let outer_environment = self
+            .environment
+            .take()
+            .expect("Environment must be present at all times");
+        let inner_environment = Environment::with_parent(outer_environment);
+        self.environment.replace(inner_environment);
     }
 
-    fn evaluate_expr(&mut self, expr: &Expr) -> InterpretResult<Value> {
+    fn pop_env(&mut self) {
+        let inner_environment = self
+            .environment
+            .take()
+            .expect("Environment must be present at all times");
+        let outer_environment = inner_environment
+            .into_parent()
+            .expect("Must be able to pop a parent environment from a local one");
+        self.environment.replace(outer_environment);
+    }
+
+    fn eval_expr(&mut self, expr: &Expr) -> InterpretResult<Value> {
         match expr {
-            Expr::Lit(lit) => self.evaluate_lit(lit),
-            Expr::Group(group) => self.evaluate_group(group),
-            Expr::Unary(unary) => self.evaluate_unary(unary),
-            Expr::Binary(binary) => self.evaluate_binary(binary),
-            Expr::Var(var) => self.evaluate_var(var),
-            Expr::Assignment(assignment) => self.evaluate_assignment(assignment),
+            Expr::Lit(lit) => self.eval_lit(lit),
+            Expr::Group(group) => self.eval_group(group),
+            Expr::Unary(unary) => self.eval_unary(unary),
+            Expr::Binary(binary) => self.eval_binary(binary),
+            Expr::Var(var) => self.eval_var(var),
+            Expr::Assignment(assignment) => self.eval_assignment(assignment),
         }
     }
 
-    fn evaluate_lit(&self, lit: &LitExpr) -> InterpretResult<Value> {
+    fn eval_lit(&self, lit: &LitExpr) -> InterpretResult<Value> {
         let value = match lit {
             LitExpr::Number(number) => Value::Number(*number),
             // We clone the string from the AST, as we may be
@@ -142,12 +191,12 @@ impl Interpreter {
         Ok(value)
     }
 
-    fn evaluate_group(&mut self, group: &GroupExpr) -> InterpretResult<Value> {
-        self.evaluate_expr(group.expr())
+    fn eval_group(&mut self, group: &GroupExpr) -> InterpretResult<Value> {
+        self.eval_expr(group.expr())
     }
 
-    fn evaluate_unary(&mut self, unary: &UnaryExpr) -> InterpretResult<Value> {
-        let value = self.evaluate_expr(unary.expr())?;
+    fn eval_unary(&mut self, unary: &UnaryExpr) -> InterpretResult<Value> {
+        let value = self.eval_expr(unary.expr())?;
         match unary.operator() {
             UnaryOperator::Minus => match &value {
                 Value::Number(number) => Ok(Value::Number(-number)),
@@ -157,9 +206,9 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_binary(&mut self, binary: &BinaryExpr) -> InterpretResult<Value> {
-        let left_value = self.evaluate_expr(binary.left_expr())?;
-        let right_value = self.evaluate_expr(binary.right_expr())?;
+    fn eval_binary(&mut self, binary: &BinaryExpr) -> InterpretResult<Value> {
+        let left_value = self.eval_expr(binary.left_expr())?;
+        let right_value = self.eval_expr(binary.right_expr())?;
 
         match binary.operator() {
             BinaryOperator::Plus => match (left_value, right_value) {
@@ -208,18 +257,25 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_var(&self, var: &VarExpr) -> InterpretResult<Value> {
+    fn eval_var(&self, var: &VarExpr) -> InterpretResult<Value> {
         self.environment
+            .as_ref()
+            .expect("Environment must be present at all times")
             .get(var.ident())
             .cloned()
             .ok_or(InterpretError::UndeclaredVariableUse)
     }
 
-    fn evaluate_assignment(&mut self, assignment: &AssignmentExpr) -> InterpretResult<Value> {
+    fn eval_assignment(&mut self, assignment: &AssignmentExpr) -> InterpretResult<Value> {
         let lvalue = assignment.target();
-        let rvalue = self.evaluate_expr(assignment.expr())?;
+        let rvalue = self.eval_expr(assignment.expr())?;
 
-        match self.environment.assign(lvalue.ident(), rvalue.clone()) {
+        let environment = self
+            .environment
+            .as_mut()
+            .expect("Environment must be present at all times");
+
+        match environment.assign(lvalue.ident(), rvalue.clone()) {
             Ok(()) => Ok(rvalue),
             Err(AssignError::ValueNotDeclared) => {
                 let ident = lvalue.ident().to_string();

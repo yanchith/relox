@@ -21,8 +21,10 @@ declaration → varDecl
             | statement ;
 
 statement → exprStmt
-          | printStmt ;
+          | printStmt
+          | block ;
 
+block     → "{" declaration* "}" ;
 exprStmt  → expr ";" ;
 printStmt → "print" expr ";" ;
 
@@ -60,14 +62,18 @@ impl Program {
 
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("(program ")?;
+
         let mut first = true;
         for stmt in &self.stmts {
             if !first {
-                writeln!(f)?;
+                f.write_str(" ")?;
             }
+            f.write_str(&stmt.to_string())?;
             first = false;
-            write!(f, "{} ", stmt)?;
         }
+
+        f.write_str(")")?;
 
         Ok(())
     }
@@ -78,6 +84,7 @@ pub enum Stmt {
     Expr(ExprStmt),
     Print(PrintStmt),
     VarDecl(VarDeclStmt),
+    Block(BlockStmt),
 }
 
 impl fmt::Display for Stmt {
@@ -86,6 +93,7 @@ impl fmt::Display for Stmt {
             Stmt::Expr(expr) => write!(f, "{}", expr),
             Stmt::Print(print) => write!(f, "{}", print),
             Stmt::VarDecl(decl) => write!(f, "{}", decl),
+            Stmt::Block(block) => write!(f, "{}", block),
         }
     }
 }
@@ -161,6 +169,40 @@ impl fmt::Display for VarDeclStmt {
             Some(expr) => write!(f, "(decl {} {})", self.ident, expr),
             None => write!(f, "(decl {})", self.ident),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockStmt {
+    stmts: Vec<Stmt>,
+}
+
+impl BlockStmt {
+    pub fn new(stmts: Vec<Stmt>) -> Self {
+        Self { stmts }
+    }
+
+    pub fn stmts(&self) -> &[Stmt] {
+        &self.stmts
+    }
+}
+
+impl fmt::Display for BlockStmt {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("(block ")?;
+
+        let mut first = true;
+        for stmt in &self.stmts {
+            if !first {
+                f.write_str(" ")?;
+            }
+            f.write_str(&stmt.to_string())?;
+            first = false;
+        }
+
+        f.write_str(")")?;
+
+        Ok(())
     }
 }
 
@@ -449,6 +491,7 @@ pub enum ParseError {
     ExpectedSemicolonAfterVarDeclStmt(Option<Token>),
     ExpectedIdentAfterVarKeyword(Option<Token>),
     ExpectedClosingParenAfterGroupExpr(Option<Token>),
+    ExpectedClosingBraceAfterBlockStmt,
     ExpectedPrimaryExpr(Option<Token>),
     InvalidAssignmentTarget(Expr),
 }
@@ -500,6 +543,10 @@ impl fmt::Display for ParseError {
             ParseError::ExpectedClosingParenAfterGroupExpr(None) => write!(
                 f,
                 "Expected closing parenthesis after group expression but found end of input",
+            ),
+            ParseError::ExpectedClosingBraceAfterBlockStmt => write!(
+                f,
+                "Expected closing brace after block statement but found end of input",
             ),
             ParseError::ExpectedPrimaryExpr(Some(token)) => {
                 write!(f, "Expected primary expression but found token {}", token)
@@ -677,10 +724,13 @@ fn finish_parse_var_decl(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 fn parse_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
     statement → exprStmt
-              | printStmt ;
+              | printStmt
+              | block ;
     */
     if ctx.read_token_if(&TokenValue::Print).is_some() {
         finish_parse_print_stmt(ctx)
+    } else if ctx.read_token_if(&TokenValue::LeftBrace).is_some() {
+        finish_parse_block_stmt(ctx)
     } else {
         parse_expr_stmt(ctx)
     }
@@ -697,6 +747,24 @@ fn finish_parse_print_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
         Err(ParseError::ExpectedSemicolonAfterPrintStmt(
             ctx.peek_token().cloned(),
         ))
+    }
+}
+
+fn finish_parse_block_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+    /*
+    block     → "{" declaration* "}" ;
+     */
+    let mut stmts = Vec::new();
+
+    while !ctx.check_token(&TokenValue::RightBrace) && ctx.has_more_tokens() {
+        let stmt = parse_decl(ctx)?;
+        stmts.push(stmt);
+    }
+
+    if ctx.read_token_if(&TokenValue::RightBrace).is_some() {
+        Ok(Stmt::Block(BlockStmt::new(stmts)))
+    } else {
+        Err(ParseError::ExpectedClosingBraceAfterBlockStmt)
     }
 }
 
