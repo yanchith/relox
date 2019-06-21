@@ -1,8 +1,6 @@
-use std::collections::HashMap;
 use std::f64;
 use std::fmt;
 use std::iter::Peekable;
-use std::ops::Range;
 use std::str::{Chars, FromStr};
 
 use crate::reporter::Reporter;
@@ -33,24 +31,33 @@ impl fmt::Display for Token {
     }
 }
 
+/// A span of text. It starts on `line` and `column` and ending on
+/// `line_end` and `column_end` (inclusive). Lines are 1-indexed,
+/// columns are 0-indexed,
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Span {
-    pub line_range: Range<u32>,
-    pub char_range: Range<u32>,
+    pub line: u32,
+    pub line_end: u32,
+    pub column: u32,
+    pub column_end: u32,
 }
 
 impl Span {
-    pub fn new(line_range: Range<u32>, char_range: Range<u32>) -> Self {
+    pub fn new(line: u32, line_end: u32, column: u32, column_end: u32) -> Span {
         Self {
-            line_range,
-            char_range,
+            line,
+            line_end,
+            column,
+            column_end,
         }
     }
 
-    pub fn combine(left: &Self, right: &Self) -> Self {
+    pub fn merge(left: &Self, right: &Self) -> Self {
         Self {
-            line_range: left.line_range.start..right.line_range.end,
-            char_range: left.char_range.start..right.char_range.end,
+            line: left.line,
+            line_end: right.line_end,
+            column: left.column,
+            column_end: right.column_end,
         }
     }
 }
@@ -154,7 +161,6 @@ impl fmt::Display for TokenValue {
 pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
     // TODO: initialize only once, statically - doesn't necessarily
     // have to be a hash table
-    let keyword_map = init_keyword_map();
     let mut ctx = LexerCtx::new(source);
     let mut tokens = Vec::new();
 
@@ -178,7 +184,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     let (_, span_end) = ctx.read_char().unwrap();
                     Some(Token::new(
                         TokenValue::BangEqual,
-                        Span::combine(&span, &span_end),
+                        Span::merge(&span, &span_end),
                     ))
                 } else {
                     Some(Token::new(TokenValue::Bang, span))
@@ -189,7 +195,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     let (_, span_end) = ctx.read_char().unwrap();
                     Some(Token::new(
                         TokenValue::EqualEqual,
-                        Span::combine(&span, &span_end),
+                        Span::merge(&span, &span_end),
                     ))
                 } else {
                     Some(Token::new(TokenValue::Equal, span))
@@ -200,7 +206,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     let (_, span_end) = ctx.read_char().unwrap();
                     Some(Token::new(
                         TokenValue::LessEqual,
-                        Span::combine(&span, &span_end),
+                        Span::merge(&span, &span_end),
                     ))
                 } else {
                     Some(Token::new(TokenValue::Less, span))
@@ -211,7 +217,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     let (_, span_end) = ctx.read_char().unwrap();
                     Some(Token::new(
                         TokenValue::GreaterEqual,
-                        Span::combine(&span, &span_end),
+                        Span::merge(&span, &span_end),
                     ))
                 } else {
                     Some(Token::new(TokenValue::Greater, span))
@@ -235,7 +241,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     // TODO: get span of unterminated string and report that!
                     reporter.report_compile_error(format!(
                         "Unterminated string starting on line: {}",
-                        span.line_range.start,
+                        span.line,
                     ));
                     break;
                 }
@@ -250,20 +256,20 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     Some(Token::new(TokenValue::Number(number), number_span))
                 } else {
                     // TODO: get span of number we were trying to parse and report that!
-                    reporter.report_compile_error(format!(
-                        "Invalid number on line: {}",
-                        span.line_range.start,
-                    ));
+                    reporter
+                        .report_compile_error(format!("Invalid number on line: {}", span.line,));
                     break;
                 }
             }
 
             alpha if is_alpha(alpha) => {
                 let (ident, ident_span) = ctx.read_ident_finish(alpha);
-                let token_value = keyword_map
-                    .get(&ident)
-                    .cloned()
-                    .unwrap_or_else(|| TokenValue::Ident(ident));
+
+                let search_result = KEYWORDS.binary_search_by_key(&ident.as_str(), |&(k, _)| k);
+                let token_value = match search_result {
+                    Ok(index) => KEYWORDS[index].1.clone(),
+                    Err(_) => TokenValue::Ident(ident),
+                };
 
                 Some(Token::new(token_value, ident_span))
             }
@@ -271,7 +277,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
             unexpected => {
                 reporter.report_compile_error(format!(
                     "Unexpected character {} on line {}",
-                    unexpected, span.line_range.start
+                    unexpected, span.line,
                 ));
                 break;
             }
@@ -287,39 +293,46 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
 
 struct LexerCtx<'a> {
     source: Peekable<Chars<'a>>,
-    curr_char: u32,
     curr_line: u32,
+    curr_column: u32,
 }
 
 impl<'a> LexerCtx<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
             source: source.chars().peekable(),
-            curr_char: 0,
             curr_line: 1,
+            curr_column: 0,
         }
     }
 
     pub fn read_line_finish(&mut self) {
         while let Some(c) = self.source.next() {
-            self.curr_char += 1;
+            self.curr_column += 1;
             if c == CHAR_NEWLINE {
                 self.curr_line += 1;
+                self.curr_column = 0;
                 break;
             }
         }
     }
 
     pub fn read_string_finish(&mut self) -> Option<(String, Span)> {
-        let char_start = self.curr_char - 1; // First char (double quote) is already read
         let line_start = self.curr_line; // Strings can be multiline, need to track where it started
+
+        // TODO: track this properly... The string could have started
+        // as the last character of the previous line saturating_sub()
+        // is used as the string could have started on the previour
+        // line, meaning unchecked sub would underflow here.
+        let column_start = self.curr_column.saturating_sub(1);
 
         let mut buffer = String::new();
         let mut string_terminated = false;
         while let Some(c) = self.source.next() {
-            self.curr_char += 1;
+            self.curr_column += 1;
             if c == CHAR_NEWLINE {
                 self.curr_line += 1;
+                self.curr_column = 0;
             }
 
             if c == CHAR_DOUBLE_QUOTE {
@@ -331,7 +344,7 @@ impl<'a> LexerCtx<'a> {
         }
 
         if string_terminated {
-            let span = Span::new(line_start..self.curr_line + 1, char_start..self.curr_char);
+            let span = Span::new(line_start, self.curr_line, column_start, self.curr_column);
             Some((buffer, span))
         } else {
             None
@@ -341,7 +354,9 @@ impl<'a> LexerCtx<'a> {
     /// A number literal is a series of digits optionally followed by
     /// a "." and one or more digits
     pub fn read_number_finish(&mut self, first_digit: char) -> Option<(f64, Span)> {
-        let char_start = self.curr_char - 1; // First char is already read
+        // First char is already read. Should be safe to do unchecked
+        // sub, numbers can not span multiple lines.
+        let column_start = self.curr_column - 1;
         let mut buffer = format!("{}", first_digit);
 
         // Read leading digits
@@ -389,8 +404,10 @@ impl<'a> LexerCtx<'a> {
 
         if let Ok(number) = f64::from_str(&buffer) {
             let span = Span::new(
-                self.curr_line..self.curr_line + 1,
-                char_start..self.curr_char,
+                self.curr_line,
+                self.curr_line,
+                column_start,
+                self.curr_column,
             );
             Some((number, span))
         } else {
@@ -399,7 +416,9 @@ impl<'a> LexerCtx<'a> {
     }
 
     pub fn read_ident_finish(&mut self, first_alpha: char) -> (String, Span) {
-        let char_start = self.curr_char - 1; // First char is already read
+        // First char is already read. Should be safe to do unchecked
+        // sub, idents can not span multiple lines.
+        let column_start = self.curr_column - 1;
         let mut buffer = format!("{}", first_alpha);
 
         while let Some(maybe_alphanumeric) = self.source.peek() {
@@ -412,21 +431,24 @@ impl<'a> LexerCtx<'a> {
         }
 
         let span = Span::new(
-            self.curr_line..self.curr_line + 1,
-            char_start..self.curr_char,
+            self.curr_line,
+            self.curr_line,
+            column_start,
+            self.curr_column,
         );
         (buffer, span)
     }
 
     pub fn read_char(&mut self) -> Option<(char, Span)> {
         if let Some(c) = self.source.next() {
-            let char_start = self.curr_char;
+            let column_start = self.curr_column;
             let line_start = self.curr_line;
-            self.curr_char += 1;
+            self.curr_column += 1;
             if c == CHAR_NEWLINE {
                 self.curr_line += 1;
+                self.curr_column = 0;
             }
-            let span = Span::new(line_start..self.curr_line, char_start..self.curr_char);
+            let span = Span::new(line_start, self.curr_line, column_start, self.curr_column);
 
             Some((c, span))
         } else {
@@ -453,28 +475,26 @@ fn is_alphanumeric(c: char) -> bool {
     is_alpha(c) || is_digit(c)
 }
 
-fn init_keyword_map() -> HashMap<String, TokenValue> {
-    let mut map = HashMap::with_capacity(16);
-
-    map.insert(KEYWORD_AND.to_string(), TokenValue::And);
-    map.insert(KEYWORD_CLASS.to_string(), TokenValue::Class);
-    map.insert(KEYWORD_ELSE.to_string(), TokenValue::Else);
-    map.insert(KEYWORD_FALSE.to_string(), TokenValue::False);
-    map.insert(KEYWORD_FUN.to_string(), TokenValue::Fun);
-    map.insert(KEYWORD_FOR.to_string(), TokenValue::For);
-    map.insert(KEYWORD_IF.to_string(), TokenValue::If);
-    map.insert(KEYWORD_NIL.to_string(), TokenValue::Nil);
-    map.insert(KEYWORD_OR.to_string(), TokenValue::Or);
-    map.insert(KEYWORD_PRINT.to_string(), TokenValue::Print);
-    map.insert(KEYWORD_RETURN.to_string(), TokenValue::Return);
-    map.insert(KEYWORD_SUPER.to_string(), TokenValue::Super);
-    map.insert(KEYWORD_THIS.to_string(), TokenValue::This);
-    map.insert(KEYWORD_TRUE.to_string(), TokenValue::True);
-    map.insert(KEYWORD_VAR.to_string(), TokenValue::Var);
-    map.insert(KEYWORD_WHILE.to_string(), TokenValue::While);
-
-    map
-}
+// The keyword strings to token mapping. Must ALWAYS be sorted as
+// binary search is performed.
+static KEYWORDS: &[(&str, TokenValue)] = &[
+    (KEYWORD_AND, TokenValue::And),
+    (KEYWORD_CLASS, TokenValue::Class),
+    (KEYWORD_ELSE, TokenValue::Else),
+    (KEYWORD_FALSE, TokenValue::False),
+    (KEYWORD_FUN, TokenValue::Fun),
+    (KEYWORD_FOR, TokenValue::For),
+    (KEYWORD_IF, TokenValue::If),
+    (KEYWORD_NIL, TokenValue::Nil),
+    (KEYWORD_OR, TokenValue::Or),
+    (KEYWORD_PRINT, TokenValue::Print),
+    (KEYWORD_RETURN, TokenValue::Return),
+    (KEYWORD_SUPER, TokenValue::Super),
+    (KEYWORD_THIS, TokenValue::This),
+    (KEYWORD_TRUE, TokenValue::True),
+    (KEYWORD_VAR, TokenValue::Var),
+    (KEYWORD_WHILE, TokenValue::While),
+];
 
 const CHAR_LEFT_PAREN: char = '(';
 const CHAR_RIGHT_PAREN: char = ')';
