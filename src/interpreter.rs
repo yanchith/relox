@@ -1,10 +1,10 @@
 use std::fmt;
 use std::rc::Rc;
 
-use crate::environment::Environment;
+use crate::environment::{AssignError, Environment};
 use crate::parser::{
-    BinaryExpr, BinaryOperator, Expr, GroupExpr, LitExpr, Program, Stmt, UnaryExpr, UnaryOperator,
-    VarExpr,
+    AssignmentExpr, BinaryExpr, BinaryOperator, Expr, GroupExpr, LitExpr, Program, Stmt, UnaryExpr,
+    UnaryOperator, VarExpr,
 };
 use crate::reporter::Reporter;
 
@@ -37,13 +37,14 @@ impl fmt::Display for Value {
     }
 }
 
-// TODO: add Token or Span info to this error
+// TODO: add Token/Span/ident info
 // TODO: implement std::error:Error
 // TODO: implement std::fmt::Display
 #[derive(Debug)]
 pub enum InterpretError {
     TypeError,
     UndeclaredVariableUse,
+    UndeclaredVariableAssignment(String),
 }
 
 pub type InterpretResult<T> = Result<T, InterpretError>;
@@ -92,7 +93,7 @@ impl Interpreter {
         }
     }
 
-    fn interpret_expr(&self, reporter: &mut Reporter, expr: &Expr) -> Option<Value> {
+    fn interpret_expr(&mut self, reporter: &mut Reporter, expr: &Expr) -> Option<Value> {
         match self.evaluate_expr(expr) {
             Ok(value) => Some(value),
             Err(InterpretError::TypeError) => {
@@ -103,16 +104,22 @@ impl Interpreter {
                 reporter.report_runtime_error("Use of undeclared variable".to_string());
                 None
             }
+            Err(InterpretError::UndeclaredVariableAssignment(ident)) => {
+                reporter
+                    .report_runtime_error(format!("Assignment to undeclared variable {}", ident));
+                None
+            }
         }
     }
 
-    fn evaluate_expr(&self, expr: &Expr) -> InterpretResult<Value> {
+    fn evaluate_expr(&mut self, expr: &Expr) -> InterpretResult<Value> {
         match expr {
             Expr::Lit(lit) => self.evaluate_lit(lit),
             Expr::Group(group) => self.evaluate_group(group),
             Expr::Unary(unary) => self.evaluate_unary(unary),
             Expr::Binary(binary) => self.evaluate_binary(binary),
             Expr::Var(var) => self.evaluate_var(var),
+            Expr::Assignment(assignment) => self.evaluate_assignment(assignment),
         }
     }
 
@@ -135,11 +142,11 @@ impl Interpreter {
         Ok(value)
     }
 
-    fn evaluate_group(&self, group: &GroupExpr) -> InterpretResult<Value> {
+    fn evaluate_group(&mut self, group: &GroupExpr) -> InterpretResult<Value> {
         self.evaluate_expr(group.expr())
     }
 
-    fn evaluate_unary(&self, unary: &UnaryExpr) -> InterpretResult<Value> {
+    fn evaluate_unary(&mut self, unary: &UnaryExpr) -> InterpretResult<Value> {
         let value = self.evaluate_expr(unary.expr())?;
         match unary.operator() {
             UnaryOperator::Minus => match &value {
@@ -150,7 +157,7 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_binary(&self, binary: &BinaryExpr) -> InterpretResult<Value> {
+    fn evaluate_binary(&mut self, binary: &BinaryExpr) -> InterpretResult<Value> {
         let left_value = self.evaluate_expr(binary.left_expr())?;
         let right_value = self.evaluate_expr(binary.right_expr())?;
 
@@ -206,6 +213,19 @@ impl Interpreter {
             .get(var.ident())
             .cloned()
             .ok_or(InterpretError::UndeclaredVariableUse)
+    }
+
+    fn evaluate_assignment(&mut self, assignment: &AssignmentExpr) -> InterpretResult<Value> {
+        let lvalue = assignment.target();
+        let rvalue = self.evaluate_expr(assignment.expr())?;
+
+        match self.environment.assign(lvalue.ident(), rvalue.clone()) {
+            Ok(()) => Ok(rvalue),
+            Err(AssignError::ValueNotDeclared) => {
+                let ident = lvalue.ident().to_string();
+                Err(InterpretError::UndeclaredVariableAssignment(ident))
+            }
+        }
     }
 }
 

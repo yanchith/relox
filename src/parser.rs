@@ -29,7 +29,9 @@ printStmt → "print" expr ";" ;
 We express operator precedence in production rules. Equality has the
 weakest precedence, unary operators have the strongest.
 
-expr     → equality ;
+expression → assignment ;
+assignment → IDENTIFIER "=" assignment
+           | equality ;
 equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
 addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
@@ -169,6 +171,7 @@ pub enum Expr {
     Unary(UnaryExpr),
     Binary(BinaryExpr),
     Var(VarExpr),
+    Assignment(AssignmentExpr),
 }
 
 impl fmt::Display for Expr {
@@ -179,6 +182,7 @@ impl fmt::Display for Expr {
             Expr::Unary(unary) => write!(f, "{}", unary),
             Expr::Binary(binary) => write!(f, "{}", binary),
             Expr::Var(var) => write!(f, "{}", var),
+            Expr::Assignment(assignment) => write!(f, "{}", assignment),
         }
     }
 }
@@ -314,6 +318,37 @@ impl fmt::Display for VarExpr {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignmentExpr {
+    // `target` is not called `ident`, because it doesn't need to be
+    // just an identifier, but any lvalue
+    target: VarExpr,
+    expr: Box<Expr>,
+}
+
+impl AssignmentExpr {
+    pub fn new(target: VarExpr, expr: Expr) -> Self {
+        Self {
+            target,
+            expr: Box::new(expr),
+        }
+    }
+
+    pub fn target(&self) -> &VarExpr {
+        &self.target
+    }
+
+    pub fn expr(&self) -> &Expr {
+        &self.expr
+    }
+}
+
+impl fmt::Display for AssignmentExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "(assignment {} {})", self.target, self.expr)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
     Not,
@@ -415,6 +450,7 @@ pub enum ParseError {
     ExpectedIdentAfterVarKeyword(Option<Token>),
     ExpectedClosingParenAfterGroupExpr(Option<Token>),
     ExpectedPrimaryExpr(Option<Token>),
+    InvalidAssignmentTarget(Expr),
 }
 
 impl fmt::Display for ParseError {
@@ -466,10 +502,13 @@ impl fmt::Display for ParseError {
                 "Expected closing parenthesis after group expression but found end of input",
             ),
             ParseError::ExpectedPrimaryExpr(Some(token)) => {
-                write!(f, "Expected primary expression but found token {}", token,)
+                write!(f, "Expected primary expression but found token {}", token)
             }
             ParseError::ExpectedPrimaryExpr(None) => {
-                write!(f, "Expected primary expression but found end of input",)
+                write!(f, "Expected primary expression but found end of input")
+            }
+            ParseError::InvalidAssignmentTarget(expr) => {
+                write!(f, "Expression {} is not a valid assignment target", expr)
             }
         }
     }
@@ -576,16 +615,16 @@ impl<'a> ParserCtx<'a> {
                     return;
                 }
                 TokenValue::Class
-                    | TokenValue::Fun
-                    | TokenValue::Var
-                    | TokenValue::For
-                    | TokenValue::If
-                    | TokenValue::While
-                    | TokenValue::Print
-                    | TokenValue::Return => {
-                        // Next token is a keyword. What comes after can be meaningful.
-                        return;
-                    }
+                | TokenValue::Fun
+                | TokenValue::Var
+                | TokenValue::For
+                | TokenValue::If
+                | TokenValue::While
+                | TokenValue::Print
+                | TokenValue::Return => {
+                    // Next token is a keyword. What comes after can be meaningful.
+                    return;
+                }
                 _ => (),
             }
 
@@ -677,10 +716,34 @@ fn parse_expr_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 
 fn parse_expr(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
-    expr     → equality ;
+    expression → assignment ;
     */
 
-    parse_equality(ctx)
+    parse_assignment(ctx)
+}
+
+fn parse_assignment(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+    /*
+    assignment → IDENTIFIER "=" assignment
+               | equality ;
+     */
+
+    let expr = parse_equality(ctx)?;
+    if ctx.read_token_if(&TokenValue::Equal).is_some() {
+        // Instead of looping through operands like elsewhere, we
+        // recurse to `parse_assignment` to emulate
+        // right-associativity
+        let right_expr = parse_assignment(ctx)?;
+
+        if let Expr::Var(var) = expr {
+            Ok(Expr::Assignment(AssignmentExpr::new(var, right_expr)))
+        } else {
+            Err(ParseError::InvalidAssignmentTarget(expr))
+        }
+    } else {
+        // No assignment token, fall through to other rules
+        Ok(expr)
+    }
 }
 
 fn parse_equality(ctx: &mut ParserCtx) -> ParseResult<Expr> {
