@@ -76,7 +76,7 @@ impl Interpreter {
 
     pub fn interpret(&mut self, reporter: &mut Reporter, program: &Program) {
         for stmt in program.stmts() {
-            match self.interpret_stmt(stmt) {
+            match self.eval_stmt(stmt) {
                 Ok(Value::Nil) => (),
                 Ok(value) => println!("{}", value),
                 Err(err) => {
@@ -91,9 +91,19 @@ impl Interpreter {
         }
     }
 
-    fn interpret_stmt(&mut self, stmt: &Stmt) -> InterpretResult<Value> {
+    fn eval_stmt(&mut self, stmt: &Stmt) -> InterpretResult<Value> {
         match stmt {
             Stmt::Expr(expr_stmt) => self.eval_expr(expr_stmt.expr()),
+            Stmt::If(if_stmt) => {
+                let cond = self.eval_expr(if_stmt.cond_expr())?;
+                if is_truthy(&cond) {
+                    self.eval_stmt(if_stmt.then_stmt())?;
+                } else if let Some(else_stmt) = if_stmt.else_stmt() {
+                    self.eval_stmt(else_stmt)?;
+                }
+
+                Ok(Value::Nil)
+            }
             Stmt::Print(print_stmt) => {
                 let value = self.eval_expr(print_stmt.expr())?;
                 println!("{}", value);
@@ -124,7 +134,7 @@ impl Interpreter {
                     // cleaning up the environment! Therefore we store
                     // the error, perform the cleanup, and only
                     // afterwards return the error.
-                    if let Err(err) = self.interpret_stmt(stmt) {
+                    if let Err(err) = self.eval_stmt(stmt) {
                         error = Some(err);
                         break;
                     }

@@ -21,19 +21,22 @@ declaration → varDecl
             | statement ;
 
 statement → exprStmt
+          | ifStmt
           | printStmt
           | block ;
 
-block     → "{" declaration* "}" ;
 exprStmt  → expr ";" ;
+ifStmt    → "if" "(" expression ")" statement ( "else" statement )? ;
 printStmt → "print" expr ";" ;
+block     → "{" declaration* "}" ;
 
 We express operator precedence in production rules. Equality has the
 weakest precedence, unary operators have the strongest.
 
-expression → assignment ;
-assignment → IDENTIFIER "=" assignment
-           | equality ;
+expression     → assignment ;
+assignment     → IDENTIFIER "=" assignment
+               | equality ;
+
 equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
 addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
@@ -82,6 +85,7 @@ impl fmt::Display for Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Expr(ExprStmt),
+    If(IfStmt),
     Print(PrintStmt),
     VarDecl(VarDeclStmt),
     Block(BlockStmt),
@@ -91,6 +95,7 @@ impl fmt::Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Stmt::Expr(expr) => write!(f, "{}", expr),
+            Stmt::If(if_) => write!(f, "{}", if_),
             Stmt::Print(print) => write!(f, "{}", print),
             Stmt::VarDecl(decl) => write!(f, "{}", decl),
             Stmt::Block(block) => write!(f, "{}", block),
@@ -116,6 +121,59 @@ impl ExprStmt {
 impl fmt::Display for ExprStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "(expr {})", self.expr)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfStmt {
+    cond_expr: Expr,
+    then_stmt: Box<Stmt>,
+    else_stmt: Option<Box<Stmt>>,
+}
+
+impl IfStmt {
+    pub fn new(cond_expr: Expr, then_stmt: Stmt) -> Self {
+        Self {
+            cond_expr,
+            then_stmt: Box::new(then_stmt),
+            else_stmt: None,
+        }
+    }
+
+    pub fn with_else_branch(cond_expr: Expr, then_stmt: Stmt, else_stmt: Stmt) -> Self {
+        Self {
+            cond_expr,
+            then_stmt: Box::new(then_stmt),
+            else_stmt: Some(Box::new(else_stmt)),
+        }
+    }
+
+    pub fn cond_expr(&self) -> &Expr {
+        &self.cond_expr
+    }
+
+    pub fn then_stmt(&self) -> &Stmt {
+        &self.then_stmt
+    }
+
+    pub fn else_stmt(&self) -> Option<&Stmt> {
+        match &self.else_stmt {
+            Some(else_stmt) => Some(&else_stmt),
+            None => None,
+        }
+    }
+}
+
+impl fmt::Display for IfStmt {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.else_stmt {
+            Some(else_stmt) => write!(
+                f,
+                "(if {} {} {})",
+                self.cond_expr, self.then_stmt, else_stmt,
+            ),
+            None => write!(f, "(if {} {})", self.cond_expr, self.then_stmt),
+        }
     }
 }
 
@@ -492,6 +550,8 @@ pub enum ParseError {
     ExpectedIdentAfterVarKeyword(Option<Token>),
     ExpectedClosingParenAfterGroupExpr(Option<Token>),
     ExpectedClosingBraceAfterBlockStmt,
+    ExpectedOpeningParenAfterIf(Option<Token>),
+    ExpectedClosingParenAfterIfCond(Option<Token>),
     ExpectedPrimaryExpr(Option<Token>),
     InvalidAssignmentTarget(Expr),
 }
@@ -547,6 +607,24 @@ impl fmt::Display for ParseError {
             ParseError::ExpectedClosingBraceAfterBlockStmt => write!(
                 f,
                 "Expected closing brace after block statement but found end of input",
+            ),
+            ParseError::ExpectedOpeningParenAfterIf(Some(token)) => write!(
+                f,
+                "Expected opening parenthesis after 'if' keyword but found {}",
+                token,
+            ),
+            ParseError::ExpectedOpeningParenAfterIf(None) => write!(
+                f,
+                "Expected opening parenthesis after 'if' keyword but found end of input",
+            ),
+            ParseError::ExpectedClosingParenAfterIfCond(Some(token)) => write!(
+                f,
+                "Expected closing parenthesis after 'if' statement condition but found {}",
+                token,
+            ),
+            ParseError::ExpectedClosingParenAfterIfCond(None) => write!(
+                f,
+                "Expected closing parenthesis after 'if' statement condition but found end of input",
             ),
             ParseError::ExpectedPrimaryExpr(Some(token)) => {
                 write!(f, "Expected primary expression but found token {}", token)
@@ -724,15 +802,48 @@ fn finish_parse_var_decl(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 fn parse_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
     statement → exprStmt
+              | ifStmt
               | printStmt
               | block ;
-    */
-    if ctx.read_token_if(&TokenValue::Print).is_some() {
+     */
+    if ctx.read_token_if(&TokenValue::If).is_some() {
+        finish_parse_if_stmt(ctx)
+    } else if ctx.read_token_if(&TokenValue::Print).is_some() {
         finish_parse_print_stmt(ctx)
     } else if ctx.read_token_if(&TokenValue::LeftBrace).is_some() {
         finish_parse_block_stmt(ctx)
     } else {
         parse_expr_stmt(ctx)
+    }
+}
+
+fn finish_parse_if_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+    /*
+    ifStmt    → "if" "(" expression ")" statement ( "else" statement )? ;
+    */
+    if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
+        let cond_expr = parse_expr(ctx)?;
+        if ctx.read_token_if(&TokenValue::RightParen).is_some() {
+            let then_stmt = parse_stmt(ctx)?;
+            if ctx.read_token_if(&TokenValue::Else).is_some() {
+                let else_stmt = parse_stmt(ctx)?;
+                Ok(Stmt::If(IfStmt::with_else_branch(
+                    cond_expr,
+                    then_stmt,
+                    else_stmt,
+                )))
+            } else {
+                Ok(Stmt::If(IfStmt::new(cond_expr, then_stmt)))
+            }
+        } else {
+            Err(ParseError::ExpectedClosingParenAfterIfCond(
+                ctx.peek_token().cloned(),
+            ))
+        }
+    } else {
+        Err(ParseError::ExpectedOpeningParenAfterIf(
+            ctx.peek_token().cloned(),
+        ))
     }
 }
 
