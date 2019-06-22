@@ -142,15 +142,21 @@ impl Interpreter {
     }
 
     fn push_env(&mut self) {
+        assert!(self.environment.is_some(), "Environment must be present at all times");
+
         let outer_environment = self
             .environment
             .take()
             .expect("Environment must be present at all times");
         let inner_environment = Environment::with_parent(outer_environment);
         self.environment.replace(inner_environment);
+
+        assert!(self.environment.is_some(), "Environment must be present at all times");
     }
 
     fn pop_env(&mut self) {
+        assert!(self.environment.is_some(), "Environment must be present at all times");
+
         let inner_environment = self
             .environment
             .take()
@@ -159,6 +165,8 @@ impl Interpreter {
             .into_parent()
             .expect("Must be able to pop a parent environment from a local one");
         self.environment.replace(outer_environment);
+
+        assert!(self.environment.is_some(), "Environment must be present at all times");
     }
 
     fn eval_expr(&mut self, expr: &Expr) -> InterpretResult<Value> {
