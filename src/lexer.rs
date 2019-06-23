@@ -480,8 +480,8 @@ static KEYWORDS: &[(&str, TokenValue)] = &[
     (KEYWORD_CLASS, TokenValue::Class),
     (KEYWORD_ELSE, TokenValue::Else),
     (KEYWORD_FALSE, TokenValue::False),
-    (KEYWORD_FUN, TokenValue::Fun),
     (KEYWORD_FOR, TokenValue::For),
+    (KEYWORD_FUN, TokenValue::Fun),
     (KEYWORD_IF, TokenValue::If),
     (KEYWORD_NIL, TokenValue::Nil),
     (KEYWORD_OR, TokenValue::Or),
@@ -530,8 +530,8 @@ const KEYWORD_AND: &str = "and";
 const KEYWORD_CLASS: &str = "class";
 const KEYWORD_ELSE: &str = "else";
 const KEYWORD_FALSE: &str = "false";
-const KEYWORD_FUN: &str = "fun";
 const KEYWORD_FOR: &str = "for";
+const KEYWORD_FUN: &str = "fun";
 const KEYWORD_IF: &str = "if";
 const KEYWORD_NIL: &str = "nil";
 const KEYWORD_OR: &str = "or";
