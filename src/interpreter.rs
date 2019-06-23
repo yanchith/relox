@@ -93,6 +93,20 @@ impl Interpreter {
 
     fn eval_stmt(&mut self, stmt: &Stmt) -> InterpretResult<Value> {
         match stmt {
+            Stmt::VarDecl(var_decl_stmt) => {
+                let value = match var_decl_stmt.initializer_expr() {
+                    Some(expr) => self.eval_expr(expr)?,
+                    None => Value::Nil,
+                };
+
+                // TODO: intern idents to prevent cloning
+                self.environment
+                    .as_mut()
+                    .expect("Environment must be present at all times")
+                    .define(var_decl_stmt.ident().to_string(), value);
+
+                Ok(Value::Nil)
+            }
             Stmt::Expr(expr_stmt) => self.eval_expr(expr_stmt.expr()),
             Stmt::If(if_stmt) => {
                 let cond = self.eval_expr(if_stmt.cond_expr())?;
@@ -104,32 +118,25 @@ impl Interpreter {
 
                 Ok(Value::Nil)
             }
+            Stmt::While(while_stmt) => {
+                while is_truthy(&self.eval_expr(while_stmt.cond_expr())?) {
+                    self.eval_stmt(while_stmt.loop_stmt())?;
+                }
+
+                Ok(Value::Nil)
+            }
             Stmt::Print(print_stmt) => {
                 let value = self.eval_expr(print_stmt.expr())?;
                 println!("{}", value);
 
                 Ok(Value::Nil)
             }
-            Stmt::VarDecl(var_decl) => {
-                let value = match var_decl.initializer_expr() {
-                    Some(expr) => self.eval_expr(expr)?,
-                    None => Value::Nil,
-                };
-
-                // TODO: intern idents to prevent cloning
-                self.environment
-                    .as_mut()
-                    .expect("Environment must be present at all times")
-                    .define(var_decl.ident().to_string(), value);
-
-                Ok(Value::Nil)
-            }
-            Stmt::Block(block) => {
+            Stmt::Block(block_stmt) => {
                 let mut error = None;
 
                 self.push_env();
 
-                for stmt in block.stmts() {
+                for stmt in block_stmt.stmts() {
                     // Even if this errors, we can not unwind without
                     // cleaning up the environment! Therefore we store
                     // the error, perform the cleanup, and only

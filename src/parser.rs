@@ -22,11 +22,17 @@ declaration → varDecl
 
 statement → exprStmt
           | ifStmt
+          | forStmt
+          | whileStmt
           | printStmt
           | block ;
 
 exprStmt  → expr ";" ;
 ifStmt    → "if" "(" expression ")" statement ( "else" statement )? ;
+forStmt   → "for" "(" ( varDecl | exprStmt | ";" )
+                      expression? ";"
+                      expression? ")" statement ;
+whileStmt → "while" "(" expression ")" statement ;
 printStmt → "print" expr ";" ;
 block     → "{" declaration* "}" ;
 
@@ -86,21 +92,23 @@ impl fmt::Display for Program {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
+    VarDecl(VarDeclStmt),
     Expr(ExprStmt),
     If(IfStmt),
+    While(WhileStmt),
     Print(PrintStmt),
-    VarDecl(VarDeclStmt),
     Block(BlockStmt),
 }
 
 impl fmt::Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Stmt::Expr(expr) => write!(f, "{}", expr),
-            Stmt::If(if_) => write!(f, "{}", if_),
-            Stmt::Print(print) => write!(f, "{}", print),
-            Stmt::VarDecl(decl) => write!(f, "{}", decl),
-            Stmt::Block(block) => write!(f, "{}", block),
+            Stmt::VarDecl(var_decl_stmt) => write!(f, "{}", var_decl_stmt),
+            Stmt::Expr(expr_stmt) => write!(f, "{}", expr_stmt),
+            Stmt::If(if_stmt) => write!(f, "{}", if_stmt),
+            Stmt::While(loop_stmt) => write!(f, "{}", loop_stmt),
+            Stmt::Print(print_stmt) => write!(f, "{}", print_stmt),
+            Stmt::Block(block_stmt) => write!(f, "{}", block_stmt),
         }
     }
 }
@@ -176,6 +184,35 @@ impl fmt::Display for IfStmt {
             ),
             None => write!(f, "(if {} {})", self.cond_expr, self.then_stmt),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhileStmt {
+    cond_expr: Expr,
+    loop_stmt: Box<Stmt>,
+}
+
+impl WhileStmt {
+    pub fn new(cond_expr: Expr, loop_stmt: Stmt) -> Self {
+        Self {
+            cond_expr,
+            loop_stmt: Box::new(loop_stmt),
+        }
+    }
+
+    pub fn cond_expr(&self) -> &Expr {
+        &self.cond_expr
+    }
+
+    pub fn loop_stmt(&self) -> &Stmt {
+        &self.loop_stmt
+    }
+}
+
+impl fmt::Display for WhileStmt {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "(loop {} {})", self.cond_expr, self.loop_stmt)
     }
 }
 
@@ -615,7 +652,12 @@ pub enum ParseError {
     ExpectedClosingParenAfterGroupExpr(Option<Token>),
     ExpectedClosingBraceAfterBlockStmt,
     ExpectedOpeningParenAfterIf(Option<Token>),
+    ExpectedOpeningParenAfterFor(Option<Token>),
+    ExpectedOpeningParenAfterWhile(Option<Token>),
     ExpectedClosingParenAfterIfCond(Option<Token>),
+    ExpectedClosingParenAfterWhileCond(Option<Token>),
+    ExpectedSemicolonAfterForCond(Option<Token>),
+    ExpectedClosingParenAfterForIncrement(Option<Token>),
     ExpectedPrimaryExpr(Option<Token>),
     InvalidAssignmentTarget(Expr),
 }
@@ -681,6 +723,24 @@ impl fmt::Display for ParseError {
                 f,
                 "Expected opening parenthesis after 'if' keyword but found end of input",
             ),
+            ParseError::ExpectedOpeningParenAfterFor(Some(token)) => write!(
+                f,
+                "Expected opening parenthesis after 'for' keyword but found {}",
+                token,
+            ),
+            ParseError::ExpectedOpeningParenAfterFor(None) => write!(
+                f,
+                "Expected opening parenthesis after 'for' keyword but found end of input",
+            ),
+            ParseError::ExpectedOpeningParenAfterWhile(Some(token)) => write!(
+                f,
+                "Expected opening parenthesis after 'while' keyword but found {}",
+                token,
+            ),
+            ParseError::ExpectedOpeningParenAfterWhile(None) => write!(
+                f,
+                "Expected opening parenthesis after 'while' keyword but found end of input",
+            ),
             ParseError::ExpectedClosingParenAfterIfCond(Some(token)) => write!(
                 f,
                 "Expected closing parenthesis after 'if' statement condition but found {}",
@@ -689,6 +749,33 @@ impl fmt::Display for ParseError {
             ParseError::ExpectedClosingParenAfterIfCond(None) => write!(
                 f,
                 "Expected closing parenthesis after 'if' statement condition but found end of input",
+            ),
+            ParseError::ExpectedClosingParenAfterWhileCond(Some(token)) => write!(
+                f,
+                "Expected closing parenthesis after 'while' statement condition but found {}",
+                token,
+            ),
+            ParseError::ExpectedClosingParenAfterWhileCond(None) => write!(
+                f,
+                "Expected closing parenthesis after 'while' statement condition but found end of input",
+            ),
+            ParseError::ExpectedSemicolonAfterForCond(Some(token)) => write!(
+                f,
+                "Expected semicolon after 'for' condition expression but found {}",
+                token,
+            ),
+            ParseError::ExpectedSemicolonAfterForCond(None) => write!(
+                f,
+                "Expected semicolon after 'for' condition expression but found end of input",
+            ),
+            ParseError::ExpectedClosingParenAfterForIncrement(Some(token)) => write!(
+                f,
+                "Expected closing parenthesis after 'for' increment expression but found {}",
+                token,
+            ),
+            ParseError::ExpectedClosingParenAfterForIncrement(None) => write!(
+                f,
+                "Expected closing parenthesis after 'for' increment expression but found end of input",
             ),
             ParseError::ExpectedPrimaryExpr(Some(token)) => {
                 write!(f, "Expected primary expression but found token {}", token)
@@ -829,13 +916,13 @@ fn parse_decl(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     */
 
     if ctx.read_token_if(&TokenValue::Var).is_some() {
-        finish_parse_var_decl(ctx)
+        finish_parse_var_decl_stmt(ctx)
     } else {
         parse_stmt(ctx)
     }
 }
 
-fn finish_parse_var_decl(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn finish_parse_var_decl_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     if let Some(ident_token) = ctx.read_token_if_ident() {
         let initializer_expr = if ctx.read_token_if(&TokenValue::Equal).is_some() {
             Some(parse_expr(ctx)?)
@@ -852,14 +939,12 @@ fn finish_parse_var_decl(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
                 _ => unreachable!(),
             }
         } else {
-            Err(ParseError::ExpectedSemicolonAfterVarDeclStmt(
-                ctx.peek_token().cloned(),
-            ))
+            let token = ctx.peek_token().cloned();
+            Err(ParseError::ExpectedSemicolonAfterVarDeclStmt(token))
         }
     } else {
-        Err(ParseError::ExpectedIdentAfterVarKeyword(
-            ctx.peek_token().cloned(),
-        ))
+        let token = ctx.peek_token().cloned();
+        Err(ParseError::ExpectedIdentAfterVarKeyword(token))
     }
 }
 
@@ -867,11 +952,18 @@ fn parse_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
     statement → exprStmt
               | ifStmt
+              | forStmt
+              | whileStmt
               | printStmt
               | block ;
-     */
+    */
+
     if ctx.read_token_if(&TokenValue::If).is_some() {
         finish_parse_if_stmt(ctx)
+    } else if ctx.read_token_if(&TokenValue::For).is_some() {
+        finish_parse_for_stmt(ctx)
+    } else if ctx.read_token_if(&TokenValue::While).is_some() {
+        finish_parse_while_stmt(ctx)
     } else if ctx.read_token_if(&TokenValue::Print).is_some() {
         finish_parse_print_stmt(ctx)
     } else if ctx.read_token_if(&TokenValue::LeftBrace).is_some() {
@@ -885,6 +977,7 @@ fn finish_parse_if_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
     ifStmt    → "if" "(" expression ")" statement ( "else" statement )? ;
     */
+
     if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
         let cond_expr = parse_expr(ctx)?;
         if ctx.read_token_if(&TokenValue::RightParen).is_some() {
@@ -898,14 +991,117 @@ fn finish_parse_if_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
                 Ok(Stmt::If(IfStmt::new(cond_expr, then_stmt)))
             }
         } else {
-            Err(ParseError::ExpectedClosingParenAfterIfCond(
-                ctx.peek_token().cloned(),
-            ))
+            let token = ctx.peek_token().cloned();
+            Err(ParseError::ExpectedClosingParenAfterIfCond(token))
         }
     } else {
-        Err(ParseError::ExpectedOpeningParenAfterIf(
-            ctx.peek_token().cloned(),
-        ))
+        let token = ctx.peek_token().cloned();
+        Err(ParseError::ExpectedOpeningParenAfterIf(token))
+    }
+}
+
+fn finish_parse_for_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+    /*
+    forStmt   → "for" "(" ( varDecl | exprStmt | ";" )
+                          expression? ";"
+                          expression? ")" statement ;
+     */
+
+    if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
+        let initializer_stmt = if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
+            None
+        } else if ctx.read_token_if(&TokenValue::Var).is_some() {
+            // This also consumes the semicolon
+            Some(finish_parse_var_decl_stmt(ctx)?)
+        } else {
+            // This also consumes the semicolon
+            Some(parse_expr_stmt(ctx)?)
+        };
+
+        let cond_expr = if ctx.check_token(&TokenValue::Semicolon) {
+            None
+        } else {
+            Some(parse_expr(ctx)?)
+        };
+
+        if ctx.read_token_if(&TokenValue::Semicolon).is_none() {
+            let token = ctx.peek_token().cloned();
+            return Err(ParseError::ExpectedSemicolonAfterForCond(token));
+        }
+
+        let increment_expr = if ctx.check_token(&TokenValue::RightParen) {
+            None
+        } else {
+            let expr = parse_expr(ctx)?;
+            Some(expr)
+        };
+
+        if ctx.read_token_if(&TokenValue::RightParen).is_none() {
+            let token = ctx.peek_token().cloned();
+            return Err(ParseError::ExpectedClosingParenAfterForIncrement(token));
+        }
+
+        let loop_stmt = parse_stmt(ctx)?;
+
+        // Now synthetize the while loop:
+
+        // If we have `increment_expr`, replace the original
+        // `loop_stmt` with a block also containing the
+        // `increment_expr`
+
+        let mut body = if let Some(increment_expr) = increment_expr {
+            // TODO: can we affort to not wrap this in additional
+            // block? Would there be a hygiene problem?
+            Stmt::Block(BlockStmt::new(vec![
+                loop_stmt,
+                Stmt::Expr(ExprStmt::new(increment_expr)),
+            ]))
+        } else {
+            loop_stmt
+        };
+
+        // Generate the while loop with `cond_expr`, or `true` if no
+        // condition given
+
+        body = if let Some(cond_expr) = cond_expr {
+            Stmt::While(WhileStmt::new(cond_expr, body))
+        } else {
+            Stmt::While(WhileStmt::new(Expr::Lit(LitExpr::Boolean(true)), body))
+        };
+
+        // If we have `initializer_stmt`, generate a block around the
+        // while loop, prepending the initializer
+
+        body = if let Some(initializer_stmt) = initializer_stmt {
+            Stmt::Block(BlockStmt::new(vec![initializer_stmt, body]))
+        } else {
+            body
+        };
+
+        Ok(body)
+    } else {
+        let token = ctx.peek_token().cloned();
+        Err(ParseError::ExpectedOpeningParenAfterFor(token))
+    }
+}
+
+fn finish_parse_while_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+    /*
+    whileStmt → "while" "(" expression ")" statement ;
+     */
+
+    if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
+        let cond_expr = parse_expr(ctx)?;
+        if ctx.read_token_if(&TokenValue::RightParen).is_some() {
+            let loop_stmt = parse_stmt(ctx)?;
+            Ok(Stmt::While(WhileStmt::new(cond_expr, loop_stmt)))
+        } else {
+            let token = ctx.peek_token().cloned();
+            Err(ParseError::ExpectedClosingParenAfterWhileCond(token))
+        }
+    } else {
+        let token = ctx.peek_token().cloned();
+        Err(ParseError::ExpectedOpeningParenAfterWhile(token))
     }
 }
 
@@ -913,6 +1109,7 @@ fn finish_parse_print_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     /*
     printStmt → "print" expr ";" ;
     */
+
     let expr = parse_expr(ctx)?;
     if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
         Ok(Stmt::Print(PrintStmt::new(expr)))
@@ -949,9 +1146,8 @@ fn parse_expr_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
         Ok(Stmt::Expr(ExprStmt::new(expr)))
     } else {
-        Err(ParseError::ExpectedSemicolonAfterExprStmt(
-            ctx.peek_token().cloned(),
-        ))
+        let token = ctx.peek_token().cloned();
+        Err(ParseError::ExpectedSemicolonAfterExprStmt(token))
     }
 }
 
