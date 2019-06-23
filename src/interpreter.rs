@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use crate::environment::{AssignError, Environment};
 use crate::parser::{
-    AssignmentExpr, BinaryExpr, BinaryOperator, Expr, GroupExpr, LitExpr, Program, Stmt, UnaryExpr,
-    UnaryOperator, VarExpr,
+    AssignmentExpr, BinaryExpr, BinaryOperator, Expr, GroupExpr, LitExpr, LogicExpr, LogicOperator,
+    Program, Stmt, UnaryExpr, UnaryOperator, VarExpr,
 };
 use crate::reporter::Reporter;
 
@@ -152,7 +152,10 @@ impl Interpreter {
     }
 
     fn push_env(&mut self) {
-        assert!(self.environment.is_some(), "Environment must be present at all times");
+        assert!(
+            self.environment.is_some(),
+            "Environment must be present at all times",
+        );
 
         let outer_environment = self
             .environment
@@ -161,11 +164,17 @@ impl Interpreter {
         let inner_environment = Environment::with_parent(outer_environment);
         self.environment.replace(inner_environment);
 
-        assert!(self.environment.is_some(), "Environment must be present at all times");
+        assert!(
+            self.environment.is_some(),
+            "Environment must be present at all times",
+        );
     }
 
     fn pop_env(&mut self) {
-        assert!(self.environment.is_some(), "Environment must be present at all times");
+        assert!(
+            self.environment.is_some(),
+            "Environment must be present at all times",
+        );
 
         let inner_environment = self
             .environment
@@ -176,7 +185,10 @@ impl Interpreter {
             .expect("Must be able to pop a parent environment from a local one");
         self.environment.replace(outer_environment);
 
-        assert!(self.environment.is_some(), "Environment must be present at all times");
+        assert!(
+            self.environment.is_some(),
+            "Environment must be present at all times",
+        );
     }
 
     fn eval_expr(&mut self, expr: &Expr) -> InterpretResult<Value> {
@@ -185,6 +197,7 @@ impl Interpreter {
             Expr::Group(group) => self.eval_group(group),
             Expr::Unary(unary) => self.eval_unary(unary),
             Expr::Binary(binary) => self.eval_binary(binary),
+            Expr::Logic(logic) => self.eval_logic(logic),
             Expr::Var(var) => self.eval_var(var),
             Expr::Assignment(assignment) => self.eval_assignment(assignment),
         }
@@ -272,6 +285,27 @@ impl Interpreter {
             // NaN != NaN
             BinaryOperator::Equal => Ok(Value::Boolean(left_value == right_value)),
             BinaryOperator::NotEqual => Ok(Value::Boolean(left_value != right_value)),
+        }
+    }
+
+    fn eval_logic(&mut self, logic: &LogicExpr) -> InterpretResult<Value> {
+        let left_value = self.eval_expr(logic.left_expr())?;
+
+        match logic.operator() {
+            LogicOperator::And => {
+                if is_truthy(&left_value) {
+                    Ok(self.eval_expr(logic.right_expr())?)
+                } else {
+                    Ok(left_value)
+                }
+            }
+            LogicOperator::Or => {
+                if is_truthy(&left_value) {
+                    Ok(left_value)
+                } else {
+                    Ok(self.eval_expr(logic.right_expr())?)
+                }
+            }
         }
     }
 

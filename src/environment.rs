@@ -52,10 +52,12 @@ impl Environment {
     }
 
     pub fn get(&self, ident: &str) -> Option<&Value> {
-        self.values.get(ident).or_else(|| if let Some(parent) = &self.parent {
-            parent.get(ident)
-        } else {
-            None
+        self.values.get(ident).or_else(|| {
+            if let Some(parent) = &self.parent {
+                parent.get(ident)
+            } else {
+                None
+            }
         })
     }
 }

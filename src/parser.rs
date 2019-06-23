@@ -34,8 +34,10 @@ We express operator precedence in production rules. Equality has the
 weakest precedence, unary operators have the strongest.
 
 expression     → assignment ;
-assignment     → IDENTIFIER "=" assignment
-               | equality ;
+assignment     → identifier "=" assignment
+               | logic_or ;
+logic_or       → logic_and ( "or" logic_and )* ;
+logic_and      → equality ( "and" equality )* ;
 
 equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
@@ -270,6 +272,7 @@ pub enum Expr {
     Group(GroupExpr),
     Unary(UnaryExpr),
     Binary(BinaryExpr),
+    Logic(LogicExpr),
     Var(VarExpr),
     Assignment(AssignmentExpr),
 }
@@ -281,6 +284,7 @@ impl fmt::Display for Expr {
             Expr::Group(group) => write!(f, "{}", group),
             Expr::Unary(unary) => write!(f, "{}", unary),
             Expr::Binary(binary) => write!(f, "{}", binary),
+            Expr::Logic(logic) => write!(f, "{}", logic),
             Expr::Var(var) => write!(f, "{}", var),
             Expr::Assignment(assignment) => write!(f, "{}", assignment),
         }
@@ -392,7 +396,46 @@ impl fmt::Display for BinaryExpr {
         write!(
             f,
             "({} {} {})",
-            self.operator, self.left_expr, self.right_expr
+            self.operator, self.left_expr, self.right_expr,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LogicExpr {
+    left_expr: Box<Expr>,
+    right_expr: Box<Expr>,
+    operator: LogicOperator,
+}
+
+impl LogicExpr {
+    pub fn new(left_expr: Expr, right_expr: Expr, operator: LogicOperator) -> Self {
+        Self {
+            left_expr: Box::new(left_expr),
+            right_expr: Box::new(right_expr),
+            operator,
+        }
+    }
+
+    pub fn left_expr(&self) -> &Expr {
+        &self.left_expr
+    }
+
+    pub fn right_expr(&self) -> &Expr {
+        &self.right_expr
+    }
+
+    pub fn operator(&self) -> LogicOperator {
+        self.operator
+    }
+}
+
+impl fmt::Display for LogicExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "({} {} {})",
+            self.operator, self.left_expr, self.right_expr,
         )
     }
 }
@@ -455,6 +498,7 @@ pub enum UnaryOperator {
     Minus,
 }
 
+// TODO: token in error
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnaryOperatorFromTokenError;
 
@@ -497,6 +541,7 @@ pub enum BinaryOperator {
     Divide,
 }
 
+// TODO: token in error
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BinaryOperatorFromTokenError;
 
@@ -536,6 +581,25 @@ impl fmt::Display for BinaryOperator {
                 BinaryOperator::Minus => "-",
                 BinaryOperator::Multiply => "*",
                 BinaryOperator::Divide => "/",
+            }
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogicOperator {
+    And,
+    Or,
+}
+
+impl fmt::Display for LogicOperator {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                LogicOperator::And => "and",
+                LogicOperator::Or => "or",
             }
         )
     }
@@ -828,9 +892,7 @@ fn finish_parse_if_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
             if ctx.read_token_if(&TokenValue::Else).is_some() {
                 let else_stmt = parse_stmt(ctx)?;
                 Ok(Stmt::If(IfStmt::with_else_branch(
-                    cond_expr,
-                    then_stmt,
-                    else_stmt,
+                    cond_expr, then_stmt, else_stmt,
                 )))
             } else {
                 Ok(Stmt::If(IfStmt::new(cond_expr, then_stmt)))
@@ -903,11 +965,11 @@ fn parse_expr(ctx: &mut ParserCtx) -> ParseResult<Expr> {
 
 fn parse_assignment(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     /*
-    assignment → IDENTIFIER "=" assignment
-               | equality ;
-     */
+    assignment     → identifier "=" assignment
+                   | logic_or ;
+    */
 
-    let expr = parse_equality(ctx)?;
+    let expr = parse_logic_or(ctx)?;
     if ctx.read_token_if(&TokenValue::Equal).is_some() {
         // Instead of looping through operands like elsewhere, we
         // recurse to `parse_assignment` to emulate
@@ -923,6 +985,34 @@ fn parse_assignment(ctx: &mut ParserCtx) -> ParseResult<Expr> {
         // No assignment token, fall through to other rules
         Ok(expr)
     }
+}
+
+fn parse_logic_or(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+    /*
+    logic_or   → logic_and ( "or" logic_and )* ;
+     */
+
+    let mut expr = parse_logic_and(ctx)?;
+    while ctx.read_token_if(&TokenValue::Or).is_some() {
+        let right_expr = parse_logic_and(ctx)?;
+        expr = Expr::Logic(LogicExpr::new(expr, right_expr, LogicOperator::Or));
+    }
+
+    Ok(expr)
+}
+
+fn parse_logic_and(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+    /*
+    logic_and  → equality ( "and" equality )* ;
+     */
+
+    let mut expr = parse_equality(ctx)?;
+    while ctx.read_token_if(&TokenValue::And).is_some() {
+        let right_expr = parse_equality(ctx)?;
+        expr = Expr::Logic(LogicExpr::new(expr, right_expr, LogicOperator::And));
+    }
+
+    Ok(expr)
 }
 
 fn parse_equality(ctx: &mut ParserCtx) -> ParseResult<Expr> {
