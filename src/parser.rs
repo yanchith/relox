@@ -1,3 +1,66 @@
+//! The parser.
+//!
+//! It parses.
+//!
+//! # Grammar
+//!
+//! ```text
+//! program   → declaration* EOF ;
+//! ```
+//!
+//! ## Statements
+//!
+//! We express "statement precedence" in production rules. Declaration
+//! statements are not allowed everywhere other stmts are, so we have
+//! to give them lower precedence, specifying them earlier in the
+//! production rules. Places that disallow declarations will use the
+//! later, higher-precedence rules only.
+//!
+//! ```text
+//! declaration → varDeclStmt
+//!             | statement ;
+//!
+//! statement → exprStmt
+//!           | ifStmt
+//!           | forStmt
+//!           | whileStmt
+//!           | printStmt
+//!           | block ;
+//!
+//! exprStmt  → expr ";" ;
+//! ifStmt    → "if" "(" expression ")" statement ( "else" statement )? ;
+//! forStmt   → "for" "(" ( varDeclStmt | exprStmt | ";" )
+//!                       expression? ";"
+//!                       expression? ")" statement ;
+//! whileStmt → "while" "(" expression ")" statement ;
+//! printStmt → "print" expr ";" ;
+//! block     → "{" declaration* "}" ;
+//! ```
+//!
+//! ## Expressions
+//!
+//! We express op precedence in production rules.
+//!
+//! ```text
+//! expression     → assignment ;
+//! assignment     → identifier "=" assignment
+//!                | logic_or ;
+//! logic_or       → logic_and ( "or" logic_and )* ;
+//! logic_and      → equality ( "and" equality )* ;
+//!
+//! equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+//! comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
+//! addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
+//! multiplication → unary ( ( "/" | "*" ) unary )* ;
+//! unary          → ( "!" | "-" ) unary
+//!                | call ;
+//! call           → primary ( "(" arguments? ")" )* ;
+//! primary        → NUMBER | STRING | "false" | "true" | "nil"
+//!                | "(" expr ")" ;
+//!
+//! arguments      → expression ( "," expression )* ;
+//! ```
+
 use std::convert::TryFrom;
 use std::fmt;
 use std::iter::Peekable;
@@ -5,56 +68,6 @@ use std::slice;
 
 use crate::lexer::{Token, TokenValue};
 use crate::reporter::Reporter;
-
-/*
-
-GRAMMAR
-
-program   → declaration* EOF ;
-
-We express "statement precedence" in production rules. Declaration
-stmts are not allowed everywhere other stmts are, so we have
-to give them lower precedence, specifying them earlier in the
-production rules.
-
-declaration → varDecl
-            | statement ;
-
-statement → exprStmt
-          | ifStmt
-          | forStmt
-          | whileStmt
-          | printStmt
-          | block ;
-
-exprStmt  → expr ";" ;
-ifStmt    → "if" "(" expression ")" statement ( "else" statement )? ;
-forStmt   → "for" "(" ( varDecl | exprStmt | ";" )
-                      expression? ";"
-                      expression? ")" statement ;
-whileStmt → "while" "(" expression ")" statement ;
-printStmt → "print" expr ";" ;
-block     → "{" declaration* "}" ;
-
-We express operator precedence in production rules. Equality has the
-weakest precedence, unary operators have the strongest.
-
-expression     → assignment ;
-assignment     → identifier "=" assignment
-               | logic_or ;
-logic_or       → logic_and ( "or" logic_and )* ;
-logic_and      → equality ( "and" equality )* ;
-
-equality       → comparison ( ( "!=" | "==" ) comparison )* ;
-comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
-addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
-multiplication → unary ( ( "/" | "*" ) unary )* ;
-unary          → ( "!" | "-" ) unary
-               | primary ;
-primary        → NUMBER | STRING | "false" | "true" | "nil"
-               | "(" expr ")" ;
-
- */
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -73,15 +86,11 @@ impl Program {
 
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("(program ")?;
+        f.write_str("(program")?;
 
-        let mut first = true;
         for stmt in &self.stmts {
-            if !first {
-                f.write_str(" ")?;
-            }
+            f.write_str(" ")?;
             f.write_str(&stmt.to_string())?;
-            first = false;
         }
 
         f.write_str(")")?;
@@ -106,7 +115,7 @@ impl fmt::Display for Stmt {
             Stmt::VarDecl(var_decl_stmt) => write!(f, "{}", var_decl_stmt),
             Stmt::Expr(expr_stmt) => write!(f, "{}", expr_stmt),
             Stmt::If(if_stmt) => write!(f, "{}", if_stmt),
-            Stmt::While(loop_stmt) => write!(f, "{}", loop_stmt),
+            Stmt::While(loop_) => write!(f, "{}", loop_),
             Stmt::Print(print_stmt) => write!(f, "{}", print_stmt),
             Stmt::Block(block_stmt) => write!(f, "{}", block_stmt),
         }
@@ -136,39 +145,39 @@ impl fmt::Display for ExprStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfStmt {
-    cond_expr: Expr,
-    then_stmt: Box<Stmt>,
-    else_stmt: Option<Box<Stmt>>,
+    cond: Expr,
+    then: Box<Stmt>,
+    else_: Option<Box<Stmt>>,
 }
 
 impl IfStmt {
-    pub fn new(cond_expr: Expr, then_stmt: Stmt) -> Self {
+    pub fn new(cond: Expr, then: Stmt) -> Self {
         Self {
-            cond_expr,
-            then_stmt: Box::new(then_stmt),
-            else_stmt: None,
+            cond,
+            then: Box::new(then),
+            else_: None,
         }
     }
 
-    pub fn with_else_branch(cond_expr: Expr, then_stmt: Stmt, else_stmt: Stmt) -> Self {
+    pub fn with_else_branch(cond: Expr, then: Stmt, else_: Stmt) -> Self {
         Self {
-            cond_expr,
-            then_stmt: Box::new(then_stmt),
-            else_stmt: Some(Box::new(else_stmt)),
+            cond,
+            then: Box::new(then),
+            else_: Some(Box::new(else_)),
         }
     }
 
-    pub fn cond_expr(&self) -> &Expr {
-        &self.cond_expr
+    pub fn cond(&self) -> &Expr {
+        &self.cond
     }
 
-    pub fn then_stmt(&self) -> &Stmt {
-        &self.then_stmt
+    pub fn then(&self) -> &Stmt {
+        &self.then
     }
 
-    pub fn else_stmt(&self) -> Option<&Stmt> {
-        match &self.else_stmt {
-            Some(else_stmt) => Some(&else_stmt),
+    pub fn else_(&self) -> Option<&Stmt> {
+        match &self.else_ {
+            Some(else_) => Some(&else_),
             None => None,
         }
     }
@@ -176,43 +185,39 @@ impl IfStmt {
 
 impl fmt::Display for IfStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match &self.else_stmt {
-            Some(else_stmt) => write!(
-                f,
-                "(if {} {} {})",
-                self.cond_expr, self.then_stmt, else_stmt,
-            ),
-            None => write!(f, "(if {} {})", self.cond_expr, self.then_stmt),
+        match &self.else_ {
+            Some(else_) => write!(f, "(if {} {} {})", self.cond, self.then, else_),
+            None => write!(f, "(if {} {})", self.cond, self.then),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhileStmt {
-    cond_expr: Expr,
-    loop_stmt: Box<Stmt>,
+    cond: Expr,
+    loop_: Box<Stmt>,
 }
 
 impl WhileStmt {
-    pub fn new(cond_expr: Expr, loop_stmt: Stmt) -> Self {
+    pub fn new(cond: Expr, loop_: Stmt) -> Self {
         Self {
-            cond_expr,
-            loop_stmt: Box::new(loop_stmt),
+            cond,
+            loop_: Box::new(loop_),
         }
     }
 
-    pub fn cond_expr(&self) -> &Expr {
-        &self.cond_expr
+    pub fn cond(&self) -> &Expr {
+        &self.cond
     }
 
-    pub fn loop_stmt(&self) -> &Stmt {
-        &self.loop_stmt
+    pub fn loop_(&self) -> &Stmt {
+        &self.loop_
     }
 }
 
 impl fmt::Display for WhileStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "(loop {} {})", self.cond_expr, self.loop_stmt)
+        write!(f, "(loop {} {})", self.cond, self.loop_)
     }
 }
 
@@ -240,29 +245,26 @@ impl fmt::Display for PrintStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VarDeclStmt {
     ident: String, // TODO: intern idents
-    initializer_expr: Option<Expr>,
+    initializer: Option<Expr>,
 }
 
 impl VarDeclStmt {
-    pub fn new(ident: String, initializer_expr: Option<Expr>) -> Self {
-        Self {
-            ident,
-            initializer_expr,
-        }
+    pub fn new(ident: String, initializer: Option<Expr>) -> Self {
+        Self { ident, initializer }
     }
 
     pub fn ident(&self) -> &str {
         &self.ident
     }
 
-    pub fn initializer_expr(&self) -> Option<&Expr> {
-        self.initializer_expr.as_ref()
+    pub fn initializer(&self) -> Option<&Expr> {
+        self.initializer.as_ref()
     }
 }
 
 impl fmt::Display for VarDeclStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match &self.initializer_expr {
+        match &self.initializer {
             Some(expr) => write!(f, "(decl {} {})", self.ident, expr),
             None => write!(f, "(decl {})", self.ident),
         }
@@ -286,15 +288,11 @@ impl BlockStmt {
 
 impl fmt::Display for BlockStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("(block ")?;
+        f.write_str("(block")?;
 
-        let mut first = true;
         for stmt in &self.stmts {
-            if !first {
-                f.write_str(" ")?;
-            }
+            f.write_str(" ")?;
             f.write_str(&stmt.to_string())?;
-            first = false;
         }
 
         f.write_str(")")?;
@@ -312,6 +310,7 @@ pub enum Expr {
     Logic(LogicExpr),
     Var(VarExpr),
     Assignment(AssignmentExpr),
+    Call(CallExpr),
 }
 
 impl fmt::Display for Expr {
@@ -324,6 +323,7 @@ impl fmt::Display for Expr {
             Expr::Logic(logic) => write!(f, "{}", logic),
             Expr::Var(var) => write!(f, "{}", var),
             Expr::Assignment(assignment) => write!(f, "{}", assignment),
+            Expr::Call(call) => write!(f, "{}", call),
         }
     }
 }
@@ -373,14 +373,14 @@ impl fmt::Display for GroupExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpr {
     expr: Box<Expr>,
-    operator: UnaryOperator,
+    op: UnaryOp,
 }
 
 impl UnaryExpr {
-    pub fn new(expr: Expr, operator: UnaryOperator) -> Self {
+    pub fn new(expr: Expr, op: UnaryOp) -> Self {
         Self {
             expr: Box::new(expr),
-            operator,
+            op,
         }
     }
 
@@ -388,92 +388,84 @@ impl UnaryExpr {
         &self.expr
     }
 
-    pub fn operator(&self) -> UnaryOperator {
-        self.operator
+    pub fn op(&self) -> UnaryOp {
+        self.op
     }
 }
 
 impl fmt::Display for UnaryExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "({} {})", self.operator, self.expr)
+        write!(f, "({} {})", self.op, self.expr)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryExpr {
-    left_expr: Box<Expr>,
-    right_expr: Box<Expr>,
-    operator: BinaryOperator,
+    left: Box<Expr>,
+    right: Box<Expr>,
+    op: BinaryOp,
 }
 
 impl BinaryExpr {
-    pub fn new(left: Expr, right: Expr, operator: BinaryOperator) -> Self {
+    pub fn new(left: Expr, right: Expr, op: BinaryOp) -> Self {
         Self {
-            left_expr: Box::new(left),
-            right_expr: Box::new(right),
-            operator,
+            left: Box::new(left),
+            right: Box::new(right),
+            op,
         }
     }
 
-    pub fn left_expr(&self) -> &Expr {
-        &self.left_expr
+    pub fn left(&self) -> &Expr {
+        &self.left
     }
 
-    pub fn right_expr(&self) -> &Expr {
-        &self.right_expr
+    pub fn right(&self) -> &Expr {
+        &self.right
     }
 
-    pub fn operator(&self) -> BinaryOperator {
-        self.operator
+    pub fn op(&self) -> BinaryOp {
+        self.op
     }
 }
 
 impl fmt::Display for BinaryExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "({} {} {})",
-            self.operator, self.left_expr, self.right_expr,
-        )
+        write!(f, "({} {} {})", self.op, self.left, self.right)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LogicExpr {
-    left_expr: Box<Expr>,
-    right_expr: Box<Expr>,
-    operator: LogicOperator,
+    left: Box<Expr>,
+    right: Box<Expr>,
+    op: LogicOp,
 }
 
 impl LogicExpr {
-    pub fn new(left_expr: Expr, right_expr: Expr, operator: LogicOperator) -> Self {
+    pub fn new(left: Expr, right: Expr, op: LogicOp) -> Self {
         Self {
-            left_expr: Box::new(left_expr),
-            right_expr: Box::new(right_expr),
-            operator,
+            left: Box::new(left),
+            right: Box::new(right),
+            op,
         }
     }
 
-    pub fn left_expr(&self) -> &Expr {
-        &self.left_expr
+    pub fn left(&self) -> &Expr {
+        &self.left
     }
 
-    pub fn right_expr(&self) -> &Expr {
-        &self.right_expr
+    pub fn right(&self) -> &Expr {
+        &self.right
     }
 
-    pub fn operator(&self) -> LogicOperator {
-        self.operator
+    pub fn op(&self) -> LogicOp {
+        self.op
     }
 }
 
 impl fmt::Display for LogicExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "({} {} {})",
-            self.operator, self.left_expr, self.right_expr,
-        )
+        write!(f, "({} {} {})", self.op, self.left, self.right)
     }
 }
 
@@ -529,43 +521,81 @@ impl fmt::Display for AssignmentExpr {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallExpr {
+    callee: Box<Expr>,
+    arguments: Vec<Expr>,
+}
+
+impl CallExpr {
+    pub fn new(callee: Expr, arguments: Vec<Expr>) -> Self {
+        Self {
+            callee: Box::new(callee),
+            arguments,
+        }
+    }
+
+    pub fn callee(&self) -> &Expr {
+        &self.callee
+    }
+
+    pub fn arguments(&self) -> &[Expr] {
+        &self.arguments
+    }
+}
+
+impl fmt::Display for CallExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "(call {}", self.callee)?;
+
+        for argument in &self.arguments {
+            f.write_str(" ")?;
+            f.write_str(&argument.to_string())?;
+        }
+
+        f.write_str(")")?;
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnaryOperator {
+pub enum UnaryOp {
     Not,
     Minus,
 }
 
 // TODO: token in error
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UnaryOperatorFromTokenError;
+pub struct UnaryOpFromTokenError;
 
-impl TryFrom<Token> for UnaryOperator {
-    type Error = UnaryOperatorFromTokenError;
+impl TryFrom<Token> for UnaryOp {
+    type Error = UnaryOpFromTokenError;
 
-    fn try_from(token: Token) -> Result<UnaryOperator, Self::Error> {
+    fn try_from(token: Token) -> Result<UnaryOp, Self::Error> {
         match token.value() {
-            TokenValue::Bang => Ok(UnaryOperator::Not),
-            TokenValue::Minus => Ok(UnaryOperator::Minus),
-            _ => Err(UnaryOperatorFromTokenError),
+            TokenValue::Bang => Ok(UnaryOp::Not),
+            TokenValue::Minus => Ok(UnaryOp::Minus),
+            _ => Err(UnaryOpFromTokenError),
         }
     }
 }
 
-impl fmt::Display for UnaryOperator {
+impl fmt::Display for UnaryOp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                UnaryOperator::Not => "!",
-                UnaryOperator::Minus => "-",
+                UnaryOp::Not => "!",
+                UnaryOp::Minus => "-",
             }
         )
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BinaryOperator {
+pub enum BinaryOp {
     Equal,
     NotEqual,
     Less,
@@ -580,63 +610,63 @@ pub enum BinaryOperator {
 
 // TODO: token in error
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BinaryOperatorFromTokenError;
+pub struct BinaryOpFromTokenError;
 
-impl TryFrom<Token> for BinaryOperator {
-    type Error = BinaryOperatorFromTokenError;
+impl TryFrom<Token> for BinaryOp {
+    type Error = BinaryOpFromTokenError;
 
-    fn try_from(token: Token) -> Result<BinaryOperator, Self::Error> {
+    fn try_from(token: Token) -> Result<BinaryOp, Self::Error> {
         match token.value() {
-            TokenValue::EqualEqual => Ok(BinaryOperator::Equal),
-            TokenValue::BangEqual => Ok(BinaryOperator::NotEqual),
-            TokenValue::Less => Ok(BinaryOperator::Less),
-            TokenValue::LessEqual => Ok(BinaryOperator::LessEqual),
-            TokenValue::Greater => Ok(BinaryOperator::Greater),
-            TokenValue::GreaterEqual => Ok(BinaryOperator::GreaterEqual),
-            TokenValue::Plus => Ok(BinaryOperator::Plus),
-            TokenValue::Minus => Ok(BinaryOperator::Minus),
-            TokenValue::Star => Ok(BinaryOperator::Multiply),
-            TokenValue::Slash => Ok(BinaryOperator::Divide),
-            _ => Err(BinaryOperatorFromTokenError),
+            TokenValue::EqualEqual => Ok(BinaryOp::Equal),
+            TokenValue::BangEqual => Ok(BinaryOp::NotEqual),
+            TokenValue::Less => Ok(BinaryOp::Less),
+            TokenValue::LessEqual => Ok(BinaryOp::LessEqual),
+            TokenValue::Greater => Ok(BinaryOp::Greater),
+            TokenValue::GreaterEqual => Ok(BinaryOp::GreaterEqual),
+            TokenValue::Plus => Ok(BinaryOp::Plus),
+            TokenValue::Minus => Ok(BinaryOp::Minus),
+            TokenValue::Star => Ok(BinaryOp::Multiply),
+            TokenValue::Slash => Ok(BinaryOp::Divide),
+            _ => Err(BinaryOpFromTokenError),
         }
     }
 }
 
-impl fmt::Display for BinaryOperator {
+impl fmt::Display for BinaryOp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                BinaryOperator::Equal => "==",
-                BinaryOperator::NotEqual => "!=",
-                BinaryOperator::Less => "<",
-                BinaryOperator::LessEqual => "<=",
-                BinaryOperator::Greater => ">",
-                BinaryOperator::GreaterEqual => ">=",
-                BinaryOperator::Plus => "+",
-                BinaryOperator::Minus => "-",
-                BinaryOperator::Multiply => "*",
-                BinaryOperator::Divide => "/",
+                BinaryOp::Equal => "==",
+                BinaryOp::NotEqual => "!=",
+                BinaryOp::Less => "<",
+                BinaryOp::LessEqual => "<=",
+                BinaryOp::Greater => ">",
+                BinaryOp::GreaterEqual => ">=",
+                BinaryOp::Plus => "+",
+                BinaryOp::Minus => "-",
+                BinaryOp::Multiply => "*",
+                BinaryOp::Divide => "/",
             }
         )
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LogicOperator {
+pub enum LogicOp {
     And,
     Or,
 }
 
-impl fmt::Display for LogicOperator {
+impl fmt::Display for LogicOp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                LogicOperator::And => "and",
-                LogicOperator::Or => "or",
+                LogicOp::And => "and",
+                LogicOp::Or => "or",
             }
         )
     }
@@ -658,8 +688,10 @@ pub enum ParseError {
     ExpectedClosingParenAfterWhileCond(Option<Token>),
     ExpectedSemicolonAfterForCond(Option<Token>),
     ExpectedClosingParenAfterForIncrement(Option<Token>),
+    ExpectedClosingParenAfterCall(Option<Token>),
     ExpectedPrimaryExpr(Option<Token>),
     InvalidAssignmentTarget(Expr),
+    TooManyCallArguments(Expr),
 }
 
 impl fmt::Display for ParseError {
@@ -777,6 +809,15 @@ impl fmt::Display for ParseError {
                 f,
                 "Expected closing parenthesis after 'for' increment expression but found end of input",
             ),
+            ParseError::ExpectedClosingParenAfterCall(Some(token)) => write!(
+                f,
+                "Expected closing parenthesis after function call but found {}",
+                token,
+            ),
+            ParseError::ExpectedClosingParenAfterCall(None) => write!(
+                f,
+                "Expected closing parenthesis after function call but found end of input",
+            ),
             ParseError::ExpectedPrimaryExpr(Some(token)) => {
                 write!(f, "Expected primary expression but found token {}", token)
             }
@@ -785,6 +826,9 @@ impl fmt::Display for ParseError {
             }
             ParseError::InvalidAssignmentTarget(expr) => {
                 write!(f, "Expression {} is not a valid assignment target", expr)
+            }
+            ParseError::TooManyCallArguments(expr) => {
+                write!(f, "Function {} has too many arguments (max allowed is {})", expr, MAX_FUNCTION_ARGUMENTS)
             }
         }
     }
@@ -910,11 +954,6 @@ impl<'a> ParserCtx<'a> {
 }
 
 fn parse_decl(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
-    /*
-    declaration → varDecl
-                | statement ;
-    */
-
     if ctx.read_token_if(&TokenValue::Var).is_some() {
         finish_parse_var_decl_stmt(ctx)
     } else {
@@ -924,7 +963,7 @@ fn parse_decl(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 
 fn finish_parse_var_decl_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     if let Some(ident_token) = ctx.read_token_if_ident() {
-        let initializer_expr = if ctx.read_token_if(&TokenValue::Equal).is_some() {
+        let initializer = if ctx.read_token_if(&TokenValue::Equal).is_some() {
             Some(parse_expr(ctx)?)
         } else {
             None
@@ -934,7 +973,7 @@ fn finish_parse_var_decl_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
             match ident_token.value() {
                 TokenValue::Ident(ident) => Ok(Stmt::VarDecl(VarDeclStmt::new(
                     ident.to_string(),
-                    initializer_expr,
+                    initializer,
                 ))),
                 _ => unreachable!(),
             }
@@ -949,15 +988,6 @@ fn finish_parse_var_decl_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 }
 
 fn parse_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
-    /*
-    statement → exprStmt
-              | ifStmt
-              | forStmt
-              | whileStmt
-              | printStmt
-              | block ;
-    */
-
     if ctx.read_token_if(&TokenValue::If).is_some() {
         finish_parse_if_stmt(ctx)
     } else if ctx.read_token_if(&TokenValue::For).is_some() {
@@ -974,21 +1004,15 @@ fn parse_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 }
 
 fn finish_parse_if_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
-    /*
-    ifStmt    → "if" "(" expression ")" statement ( "else" statement )? ;
-    */
-
     if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
-        let cond_expr = parse_expr(ctx)?;
+        let cond = parse_expr(ctx)?;
         if ctx.read_token_if(&TokenValue::RightParen).is_some() {
-            let then_stmt = parse_stmt(ctx)?;
+            let then = parse_stmt(ctx)?;
             if ctx.read_token_if(&TokenValue::Else).is_some() {
-                let else_stmt = parse_stmt(ctx)?;
-                Ok(Stmt::If(IfStmt::with_else_branch(
-                    cond_expr, then_stmt, else_stmt,
-                )))
+                let else_ = parse_stmt(ctx)?;
+                Ok(Stmt::If(IfStmt::with_else_branch(cond, then, else_)))
             } else {
-                Ok(Stmt::If(IfStmt::new(cond_expr, then_stmt)))
+                Ok(Stmt::If(IfStmt::new(cond, then)))
             }
         } else {
             let token = ctx.peek_token().cloned();
@@ -1001,12 +1025,6 @@ fn finish_parse_if_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 }
 
 fn finish_parse_for_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
-    /*
-    forStmt   → "for" "(" ( varDecl | exprStmt | ";" )
-                          expression? ";"
-                          expression? ")" statement ;
-     */
-
     if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
         let initializer_stmt = if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
             None
@@ -1018,7 +1036,7 @@ fn finish_parse_for_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
             Some(parse_expr_stmt(ctx)?)
         };
 
-        let cond_expr = if ctx.check_token(&TokenValue::Semicolon) {
+        let cond = if ctx.check_token(&TokenValue::Semicolon) {
             None
         } else {
             Some(parse_expr(ctx)?)
@@ -1041,30 +1059,30 @@ fn finish_parse_for_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
             return Err(ParseError::ExpectedClosingParenAfterForIncrement(token));
         }
 
-        let loop_stmt = parse_stmt(ctx)?;
+        let loop_ = parse_stmt(ctx)?;
 
         // Now synthetize the while loop:
 
         // If we have `increment_expr`, replace the original
-        // `loop_stmt` with a block also containing the
+        // `loop_` with a block also containing the
         // `increment_expr`
 
         let mut body = if let Some(increment_expr) = increment_expr {
             // TODO: can we affort to not wrap this in additional
             // block? Would there be a hygiene problem?
             Stmt::Block(BlockStmt::new(vec![
-                loop_stmt,
+                loop_,
                 Stmt::Expr(ExprStmt::new(increment_expr)),
             ]))
         } else {
-            loop_stmt
+            loop_
         };
 
-        // Generate the while loop with `cond_expr`, or `true` if no
+        // Generate the while loop with `cond`, or `true` if no
         // condition given
 
-        body = if let Some(cond_expr) = cond_expr {
-            Stmt::While(WhileStmt::new(cond_expr, body))
+        body = if let Some(cond) = cond {
+            Stmt::While(WhileStmt::new(cond, body))
         } else {
             Stmt::While(WhileStmt::new(Expr::Lit(LitExpr::Boolean(true)), body))
         };
@@ -1086,15 +1104,11 @@ fn finish_parse_for_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 }
 
 fn finish_parse_while_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
-    /*
-    whileStmt → "while" "(" expression ")" statement ;
-     */
-
     if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
-        let cond_expr = parse_expr(ctx)?;
+        let cond = parse_expr(ctx)?;
         if ctx.read_token_if(&TokenValue::RightParen).is_some() {
-            let loop_stmt = parse_stmt(ctx)?;
-            Ok(Stmt::While(WhileStmt::new(cond_expr, loop_stmt)))
+            let loop_ = parse_stmt(ctx)?;
+            Ok(Stmt::While(WhileStmt::new(cond, loop_)))
         } else {
             let token = ctx.peek_token().cloned();
             Err(ParseError::ExpectedClosingParenAfterWhileCond(token))
@@ -1106,10 +1120,6 @@ fn finish_parse_while_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 }
 
 fn finish_parse_print_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
-    /*
-    printStmt → "print" expr ";" ;
-    */
-
     let expr = parse_expr(ctx)?;
     if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
         Ok(Stmt::Print(PrintStmt::new(expr)))
@@ -1121,9 +1131,6 @@ fn finish_parse_print_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 }
 
 fn finish_parse_block_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
-    /*
-    block     → "{" declaration* "}" ;
-     */
     let mut stmts = Vec::new();
 
     while !ctx.check_token(&TokenValue::RightBrace) && ctx.has_more_tokens() {
@@ -1139,9 +1146,6 @@ fn finish_parse_block_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 }
 
 fn parse_expr_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
-    /*
-    exprStmt  → expr ";" ;
-    */
     let expr = parse_expr(ctx)?;
     if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
         Ok(Stmt::Expr(ExprStmt::new(expr)))
@@ -1152,28 +1156,19 @@ fn parse_expr_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
 }
 
 fn parse_expr(ctx: &mut ParserCtx) -> ParseResult<Expr> {
-    /*
-    expression → assignment ;
-    */
-
     parse_assignment(ctx)
 }
 
 fn parse_assignment(ctx: &mut ParserCtx) -> ParseResult<Expr> {
-    /*
-    assignment     → identifier "=" assignment
-                   | logic_or ;
-    */
-
     let expr = parse_logic_or(ctx)?;
     if ctx.read_token_if(&TokenValue::Equal).is_some() {
         // Instead of looping through operands like elsewhere, we
         // recurse to `parse_assignment` to emulate
         // right-associativity
-        let right_expr = parse_assignment(ctx)?;
+        let right = parse_assignment(ctx)?;
 
         if let Expr::Var(var) = expr {
-            Ok(Expr::Assignment(AssignmentExpr::new(var, right_expr)))
+            Ok(Expr::Assignment(AssignmentExpr::new(var, right)))
         } else {
             Err(ParseError::InvalidAssignmentTarget(expr))
         }
@@ -1184,130 +1179,123 @@ fn parse_assignment(ctx: &mut ParserCtx) -> ParseResult<Expr> {
 }
 
 fn parse_logic_or(ctx: &mut ParserCtx) -> ParseResult<Expr> {
-    /*
-    logic_or   → logic_and ( "or" logic_and )* ;
-     */
-
     let mut expr = parse_logic_and(ctx)?;
     while ctx.read_token_if(&TokenValue::Or).is_some() {
-        let right_expr = parse_logic_and(ctx)?;
-        expr = Expr::Logic(LogicExpr::new(expr, right_expr, LogicOperator::Or));
+        let right = parse_logic_and(ctx)?;
+        expr = Expr::Logic(LogicExpr::new(expr, right, LogicOp::Or));
     }
 
     Ok(expr)
 }
 
 fn parse_logic_and(ctx: &mut ParserCtx) -> ParseResult<Expr> {
-    /*
-    logic_and  → equality ( "and" equality )* ;
-     */
-
     let mut expr = parse_equality(ctx)?;
     while ctx.read_token_if(&TokenValue::And).is_some() {
-        let right_expr = parse_equality(ctx)?;
-        expr = Expr::Logic(LogicExpr::new(expr, right_expr, LogicOperator::And));
+        let right = parse_equality(ctx)?;
+        expr = Expr::Logic(LogicExpr::new(expr, right, LogicOp::And));
     }
 
     Ok(expr)
 }
 
 fn parse_equality(ctx: &mut ParserCtx) -> ParseResult<Expr> {
-    /*
-    equality       → comparison ( ( "!=" | "==" ) comparison )* ;
-    */
-
     let mut expr = parse_comparison(ctx)?;
-    while let Some(operator_token) =
+    while let Some(op_token) =
         ctx.read_token_if_any_of(&[TokenValue::BangEqual, TokenValue::EqualEqual])
     {
-        let right_expr = parse_comparison(ctx)?;
-        let operator = BinaryOperator::try_from(operator_token.clone())
-            .expect("Token should be a binary operator");
-        expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
+        let right = parse_comparison(ctx)?;
+        let op = BinaryOp::try_from(op_token.clone()).expect("Token should be a binary op");
+        expr = Expr::Binary(BinaryExpr::new(expr, right, op));
     }
 
     Ok(expr)
 }
 
 fn parse_comparison(ctx: &mut ParserCtx) -> ParseResult<Expr> {
-    /*
-    comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
-    */
-
     let mut expr = parse_addition(ctx)?;
-    while let Some(operator_token) = ctx.read_token_if_any_of(&[
+    while let Some(op_token) = ctx.read_token_if_any_of(&[
         TokenValue::Less,
         TokenValue::LessEqual,
         TokenValue::Greater,
         TokenValue::GreaterEqual,
     ]) {
-        let right_expr = parse_addition(ctx)?;
-        let operator = BinaryOperator::try_from(operator_token.clone())
-            .expect("Token should be a binary comparison operator");
-        expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
+        let right = parse_addition(ctx)?;
+        let op =
+            BinaryOp::try_from(op_token.clone()).expect("Token should be a binary comparison op");
+        expr = Expr::Binary(BinaryExpr::new(expr, right, op));
     }
 
     Ok(expr)
 }
 
 fn parse_addition(ctx: &mut ParserCtx) -> ParseResult<Expr> {
-    /*
-    addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
-    */
-
     let mut expr = parse_multiplication(ctx)?;
-    while let Some(operator_token) =
-        ctx.read_token_if_any_of(&[TokenValue::Plus, TokenValue::Minus])
-    {
-        let right_expr = parse_multiplication(ctx)?;
-        let operator = BinaryOperator::try_from(operator_token.clone())
-            .expect("Token should be a binary plus or minus operator");
-        expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
+    while let Some(op_token) = ctx.read_token_if_any_of(&[TokenValue::Plus, TokenValue::Minus]) {
+        let right = parse_multiplication(ctx)?;
+        let op = BinaryOp::try_from(op_token.clone())
+            .expect("Token should be a binary plus or minus op");
+        expr = Expr::Binary(BinaryExpr::new(expr, right, op));
     }
 
     Ok(expr)
 }
 
 fn parse_multiplication(ctx: &mut ParserCtx) -> ParseResult<Expr> {
-    /*
-    multiplication → unary ( ( "/" | "*" ) unary )* ;
-    */
-
     let mut expr = parse_unary(ctx)?;
-    while let Some(operator_token) =
-        ctx.read_token_if_any_of(&[TokenValue::Star, TokenValue::Slash])
-    {
-        let right_expr = parse_unary(ctx)?;
-        let operator = BinaryOperator::try_from(operator_token.clone())
-            .expect("Token should be a binary multiply or divide operator");
-        expr = Expr::Binary(BinaryExpr::new(expr, right_expr, operator));
+    while let Some(op_token) = ctx.read_token_if_any_of(&[TokenValue::Star, TokenValue::Slash]) {
+        let right = parse_unary(ctx)?;
+        let op = BinaryOp::try_from(op_token.clone())
+            .expect("Token should be a binary multiply or divide op");
+        expr = Expr::Binary(BinaryExpr::new(expr, right, op));
     }
 
     Ok(expr)
 }
 
 fn parse_unary(ctx: &mut ParserCtx) -> ParseResult<Expr> {
-    /*
-    unary          → ( "!" | "-" ) unary
-                   | primary ;
-    */
-
-    if let Some(operator_token) = ctx.read_token_if_any_of(&[TokenValue::Bang, TokenValue::Minus]) {
+    if let Some(op_token) = ctx.read_token_if_any_of(&[TokenValue::Bang, TokenValue::Minus]) {
         let expr = parse_unary(ctx)?;
-        let operator = UnaryOperator::try_from(operator_token.clone())
-            .expect("Token should be a unary operator");
-        Ok(Expr::Unary(UnaryExpr::new(expr, operator)))
+        let op = UnaryOp::try_from(op_token.clone()).expect("Token should be a unary op");
+        Ok(Expr::Unary(UnaryExpr::new(expr, op)))
     } else {
-        parse_primary(ctx)
+        parse_call(ctx)
+    }
+}
+
+fn parse_call(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+    let mut expr = parse_primary(ctx)?;
+    while ctx.read_token_if(&TokenValue::LeftParen).is_some() {
+        expr = finish_parse_call(ctx, expr)?;
+    }
+
+    Ok(expr)
+}
+
+fn finish_parse_call(ctx: &mut ParserCtx, callee: Expr) -> ParseResult<Expr> {
+    let mut arguments = Vec::new();
+    if !ctx.check_token(&TokenValue::RightParen) {
+        while {
+            if arguments.len() >= MAX_FUNCTION_ARGUMENTS {
+                // TODO: this unnecessarily throws the parser into
+                // panic mode, find a way not to do that. Maybe have a
+                // separate valiation pass?
+                return Err(ParseError::TooManyCallArguments(callee));
+            }
+            let expr = parse_expr(ctx)?;
+            arguments.push(expr);
+            ctx.read_token_if(&TokenValue::Comma).is_some()
+        } { /*This is a do-while loop*/ }
+    }
+
+    if ctx.read_token_if(&TokenValue::RightParen).is_some() {
+        Ok(Expr::Call(CallExpr::new(callee, arguments)))
+    } else {
+        let token = ctx.peek_token().cloned();
+        Err(ParseError::ExpectedClosingParenAfterCall(token))
     }
 }
 
 fn parse_primary(ctx: &mut ParserCtx) -> ParseResult<Expr> {
-    /*
-    primary        → NUMBER | STRING | "false" | "true" | "nil"
-                   | "(" expr ")" ;
-    */
-
     if let Some(token) = ctx.read_token() {
         match token.value() {
             TokenValue::True => Ok(Expr::Lit(LitExpr::Boolean(true))),
@@ -1333,3 +1321,5 @@ fn parse_primary(ctx: &mut ParserCtx) -> ParseResult<Expr> {
         Err(ParseError::ExpectedPrimaryExpr(None))
     }
 }
+
+const MAX_FUNCTION_ARGUMENTS: usize = 32;

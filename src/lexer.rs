@@ -255,7 +255,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                 } else {
                     // TODO: get span of number we were trying to parse and report that!
                     reporter
-                        .report_compile_error(format!("Invalid number on line: {}", span.line,));
+                        .report_compile_error(format!("Invalid number on line: {}", span.line));
                     break;
                 }
             }
