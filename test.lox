@@ -114,19 +114,47 @@
 // }
 // print "end declaration loop";
 
-////////////
-// Functions
-////////////
+/////////////////
+// Function calls
+/////////////////
 
-var time_start = clock();
+// var time_start = clock();
 
-var sum = 0;
-for (var i = 0; i < 100000; i = i + 1) {
-    sum = sum + 1;
+// var sum = 0;
+// for (var i = 0; i < 100000; i = i + 1) {
+//     sum = sum + 1;
+// }
+
+// var time_end = clock();
+
+// print "elapsed millis: ";
+// print time_end - time_start;
+
+////////////////////////
+// Function declarations
+////////////////////////
+
+fun foo() {
+    print "Hello, World!";
 }
 
-var time_end = clock();
+foo;
+foo();
 
-print "elapsed millis: ";
-print time_end - time_start;
+var bar = foo;
+bar;
+bar();
+
+fun outer() {
+    fun inner(p) {
+        print "inner param:";
+        print p;
+    }
+
+    print "outer calling inner";
+    inner(3.14);
+    print "outer called inner";
+}
+
+print outer();
 

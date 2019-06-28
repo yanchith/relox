@@ -5,8 +5,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::environment::{AssignError, Environment};
 use crate::parser::{
-    AssignmentExpr, BinaryExpr, BinaryOp, CallExpr, Expr, GroupExpr, LitExpr, LogicExpr, LogicOp,
-    Program, Stmt, UnaryExpr, UnaryOp, VarExpr,
+    AssignmentExpr, BinaryExpr, BinaryOp, CallExpr, Expr, FunDeclStmt, GroupExpr, LitExpr,
+    LogicExpr, LogicOp, Program, Stmt, UnaryExpr, UnaryOp, VarExpr,
 };
 use crate::reporter::Reporter;
 
@@ -51,8 +51,12 @@ impl CallableValue {
         self.callable.arity()
     }
 
-    pub fn call(&self, arguments: &[Value]) -> Value {
-        self.callable.call(arguments)
+    pub fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        arguments: &[Value],
+    ) -> InterpretResult<Value> {
+        self.callable.call(interpreter, arguments)
     }
 }
 
@@ -71,7 +75,43 @@ impl fmt::Display for CallableValue {
 
 pub trait Callable: fmt::Debug {
     fn arity(&self) -> usize;
-    fn call(&self, arguments: &[Value]) -> Value;
+    fn call(&self, interpreter: &mut Interpreter, arguments: &[Value]) -> InterpretResult<Value>;
+}
+
+#[derive(Debug)]
+struct Function {
+    fun: FunDeclStmt,
+}
+
+impl Function {
+    pub fn new(fun: FunDeclStmt) -> Self {
+        Self { fun }
+    }
+}
+
+impl Callable for Function {
+    fn arity(&self) -> usize {
+        self.fun.parameters().len()
+    }
+
+    fn call(&self, interpreter: &mut Interpreter, arguments: &[Value]) -> InterpretResult<Value> {
+        assert_eq!(
+            self.fun.parameters().len(),
+            arguments.len(),
+            "Exact number of arguments must be provided",
+        );
+
+        interpreter.push_env();
+        for (param, arg) in self.fun.parameters().iter().zip(arguments.iter()) {
+            interpreter.define(param.to_string(), arg.clone());
+        }
+
+        let res = interpreter.interpret_stmts(self.fun.body());
+
+        interpreter.pop_env();
+
+        res.map(|()| Value::Nil)
+    }
 }
 
 #[derive(Debug)]
@@ -82,14 +122,14 @@ impl Callable for NativeCallableClock {
         0
     }
 
-    fn call(&self, _: &[Value]) -> Value {
+    fn call(&self, _: &mut Interpreter, _: &[Value]) -> InterpretResult<Value> {
         let now = SystemTime::now();
         let since_the_epoch = now
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::from_secs(0));
         let millis = since_the_epoch.as_millis();
 
-        Value::Number(millis as f64)
+        Ok(Value::Number(millis as f64))
     }
 }
 
@@ -113,7 +153,7 @@ pub enum InterpretError {
     TypeError,
     ValueNotCallable(Value),
     WrongNumberOfArgumentsToCallable(usize, usize), // TODO: add callable ident
-    UndeclaredVariableUse, // TODO: add variable name
+    UndeclaredVariableUse,                          // TODO: add variable name
     UndeclaredVariableAssignment(String),
 }
 
@@ -175,71 +215,12 @@ impl Interpreter {
         }
     }
 
-    fn eval_stmt(&mut self, stmt: &Stmt) -> InterpretResult<Value> {
-        match stmt {
-            Stmt::VarDecl(var_decl_stmt) => {
-                let value = match var_decl_stmt.initializer() {
-                    Some(expr) => self.eval_expr(expr)?,
-                    None => Value::Nil,
-                };
-
-                // TODO: intern idents to prevent cloning
-                self.environment
-                    .as_mut()
-                    .expect("Environment must be present at all times")
-                    .define(var_decl_stmt.ident().to_string(), value);
-
-                Ok(Value::Nil)
-            }
-            Stmt::Expr(expr_stmt) => self.eval_expr(expr_stmt.expr()),
-            Stmt::If(if_stmt) => {
-                let cond = self.eval_expr(if_stmt.cond())?;
-                if is_truthy(&cond) {
-                    self.eval_stmt(if_stmt.then())?;
-                } else if let Some(else_) = if_stmt.else_() {
-                    self.eval_stmt(else_)?;
-                }
-
-                Ok(Value::Nil)
-            }
-            Stmt::While(while_stmt) => {
-                while is_truthy(&self.eval_expr(while_stmt.cond())?) {
-                    self.eval_stmt(while_stmt.loop_())?;
-                }
-
-                Ok(Value::Nil)
-            }
-            Stmt::Print(print_stmt) => {
-                let value = self.eval_expr(print_stmt.expr())?;
-                println!("{}", value);
-
-                Ok(Value::Nil)
-            }
-            Stmt::Block(block_stmt) => {
-                let mut error = None;
-
-                self.push_env();
-
-                for stmt in block_stmt.stmts() {
-                    // Even if this errors, we can not unwind without
-                    // cleaning up the environment! Therefore we store
-                    // the error, perform the cleanup, and only
-                    // afterwards return the error.
-                    if let Err(err) = self.eval_stmt(stmt) {
-                        error = Some(err);
-                        break;
-                    }
-                }
-
-                self.pop_env();
-
-                if let Some(err) = error {
-                    Err(err)
-                } else {
-                    Ok(Value::Nil)
-                }
-            }
+    fn interpret_stmts(&mut self, stmts: &[Stmt]) -> InterpretResult<()> {
+        for stmt in stmts {
+            self.eval_stmt(stmt)?;
         }
+
+        Ok(())
     }
 
     fn push_env(&mut self) {
@@ -280,6 +261,68 @@ impl Interpreter {
             self.environment.is_some(),
             "Environment must be present at all times",
         );
+    }
+
+    fn define(&mut self, ident: String, value: Value) {
+        // TODO: intern idents to prevent cloning
+        self.environment
+            .as_mut()
+            .expect("Environment must be present at all times")
+            .define(ident, value);
+    }
+
+    fn eval_stmt(&mut self, stmt: &Stmt) -> InterpretResult<Value> {
+        match stmt {
+            Stmt::VarDecl(var_decl) => {
+                let value = match var_decl.initializer() {
+                    Some(expr) => self.eval_expr(expr)?,
+                    None => Value::Nil,
+                };
+
+                self.define(var_decl.ident().to_string(), value);
+
+                Ok(Value::Nil)
+            }
+            Stmt::FunDecl(fun_decl) => {
+                let function = Function::new(fun_decl.clone());
+                let fun = Value::Callable(CallableValue::new(Box::new(function)));
+
+                self.define(fun_decl.ident().to_string(), fun);
+
+                Ok(Value::Nil)
+            }
+            Stmt::Expr(expr) => self.eval_expr(expr.expr()),
+            Stmt::If(if_) => {
+                let cond = self.eval_expr(if_.cond())?;
+                if is_truthy(&cond) {
+                    self.eval_stmt(if_.then())?;
+                } else if let Some(else_) = if_.else_() {
+                    self.eval_stmt(else_)?;
+                }
+
+                Ok(Value::Nil)
+            }
+            Stmt::While(while_) => {
+                while is_truthy(&self.eval_expr(while_.cond())?) {
+                    self.eval_stmt(while_.loop_())?;
+                }
+
+                Ok(Value::Nil)
+            }
+            Stmt::Print(print) => {
+                let value = self.eval_expr(print.expr())?;
+                println!("{}", value);
+
+                Ok(Value::Nil)
+            }
+            Stmt::Block(block) => {
+                self.push_env();
+                let res = self.interpret_stmts(block.stmts());
+                self.pop_env();
+
+                res.map(|()| Value::Nil)
+            }
+        }
     }
 
     fn eval_expr(&mut self, expr: &Expr) -> InterpretResult<Value> {
@@ -447,7 +490,7 @@ impl Interpreter {
                     arguments.push(arg);
                 }
 
-                Ok(callable_value.call(&arguments))
+                callable_value.call(self, &arguments)
             }
         } else {
             Err(InterpretError::ValueNotCallable(callee))

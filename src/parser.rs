@@ -18,7 +18,12 @@
 //!
 //! ```text
 //! declaration → varDeclStmt
+//!             → funDeclStmt
 //!             | statement ;
+//!
+//! funDeclStmt → "fun" function ;
+//! function    → IDENTIFIER "(" parameters? ")" block ;
+//! parameters  → IDENTIFIER ( "," IDENTIFIER )* ;
 //!
 //! statement → exprStmt
 //!           | ifStmt
@@ -102,6 +107,7 @@ impl fmt::Display for Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     VarDecl(VarDeclStmt),
+    FunDecl(FunDeclStmt),
     Expr(ExprStmt),
     If(IfStmt),
     While(WhileStmt),
@@ -113,12 +119,92 @@ impl fmt::Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Stmt::VarDecl(var_decl_stmt) => write!(f, "{}", var_decl_stmt),
+            Stmt::FunDecl(fun_decl_stmt) => write!(f, "{}", fun_decl_stmt),
             Stmt::Expr(expr_stmt) => write!(f, "{}", expr_stmt),
             Stmt::If(if_stmt) => write!(f, "{}", if_stmt),
             Stmt::While(loop_) => write!(f, "{}", loop_),
             Stmt::Print(print_stmt) => write!(f, "{}", print_stmt),
             Stmt::Block(block_stmt) => write!(f, "{}", block_stmt),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VarDeclStmt {
+    ident: String, // TODO: intern idents
+    initializer: Option<Expr>,
+}
+
+impl VarDeclStmt {
+    pub fn new(ident: String, initializer: Option<Expr>) -> Self {
+        Self { ident, initializer }
+    }
+
+    pub fn ident(&self) -> &str {
+        &self.ident
+    }
+
+    pub fn initializer(&self) -> Option<&Expr> {
+        self.initializer.as_ref()
+    }
+}
+
+impl fmt::Display for VarDeclStmt {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.initializer {
+            Some(expr) => write!(f, "(decl {} {})", self.ident, expr),
+            None => write!(f, "(decl {})", self.ident),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunDeclStmt {
+    ident: String, // TODO: indern idents
+    parameters: Vec<String>,
+    body: Vec<Stmt>,
+}
+
+impl FunDeclStmt {
+    pub fn new(ident: String, parameters: Vec<String>, body: Vec<Stmt>) -> Self {
+        Self {
+            ident,
+            parameters,
+            body,
+        }
+    }
+
+    pub fn ident(&self) -> &str {
+        &self.ident
+    }
+
+    // TODO: try using &[&str] as return type
+    pub fn parameters(&self) -> &[String] {
+        &self.parameters
+    }
+
+    pub fn body(&self) -> &[Stmt] {
+        &self.body
+    }
+}
+
+impl fmt::Display for FunDeclStmt {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("(fun (parameters")?;
+
+        for parameter in &self.parameters {
+            f.write_str(" ")?;
+            f.write_str(parameter)?;
+        }
+        f.write_str(")")?;
+
+        for stmt in &self.body {
+            f.write_str(" ")?;
+            f.write_str(&stmt.to_string())?;
+        }
+        f.write_str(")")?;
+
+        Ok(())
     }
 }
 
@@ -239,35 +325,6 @@ impl PrintStmt {
 impl fmt::Display for PrintStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "(print {})", self.expr)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct VarDeclStmt {
-    ident: String, // TODO: intern idents
-    initializer: Option<Expr>,
-}
-
-impl VarDeclStmt {
-    pub fn new(ident: String, initializer: Option<Expr>) -> Self {
-        Self { ident, initializer }
-    }
-
-    pub fn ident(&self) -> &str {
-        &self.ident
-    }
-
-    pub fn initializer(&self) -> Option<&Expr> {
-        self.initializer.as_ref()
-    }
-}
-
-impl fmt::Display for VarDeclStmt {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match &self.initializer {
-            Some(expr) => write!(f, "(decl {} {})", self.ident, expr),
-            None => write!(f, "(decl {})", self.ident),
-        }
     }
 }
 
@@ -679,6 +736,11 @@ pub enum ParseError {
     ExpectedSemicolonAfterPrintStmt(Option<Token>),
     ExpectedSemicolonAfterVarDeclStmt(Option<Token>),
     ExpectedIdentAfterVarKeyword(Option<Token>),
+    ExpectedIdentAfterFunKeyword(Option<Token>),
+    ExpectedOpeningParenAfterFunIdent(Option<Token>),
+    ExpectedIdentInFunParameters(Option<Token>),
+    ExpectedBlockAfterFunHeader(Option<Token>),
+    ExpectedClosingParenAfterFunParameters(Option<Token>),
     ExpectedClosingParenAfterGroupExpr(Option<Token>),
     ExpectedClosingBraceAfterBlockStmt,
     ExpectedOpeningParenAfterIf(Option<Token>),
@@ -692,6 +754,7 @@ pub enum ParseError {
     ExpectedPrimaryExpr(Option<Token>),
     InvalidAssignmentTarget(Expr),
     TooManyCallArguments(Expr),
+    TooManyFunParameters(String),
 }
 
 impl fmt::Display for ParseError {
@@ -732,6 +795,51 @@ impl fmt::Display for ParseError {
             ParseError::ExpectedIdentAfterVarKeyword(None) => write!(
                 f,
                 "Expected identifier after 'var' keyword but found end of input",
+            ),
+            ParseError::ExpectedIdentAfterFunKeyword(Some(token)) => write!(
+                f,
+                "Expected identifier after 'fun' keyword but found token {}",
+                token,
+            ),
+            ParseError::ExpectedIdentAfterFunKeyword(None) => write!(
+                f,
+                "Expected identifier after 'fun' keyword but found end of input",
+            ),
+            ParseError::ExpectedOpeningParenAfterFunIdent(Some(token)) => write!(
+                f,
+                "Expected opening parenthesis after function identifier but found {}",
+                token,
+            ),
+            ParseError::ExpectedOpeningParenAfterFunIdent(None) => write!(
+                f,
+                "Expected opening parenthesis after function identifier but found end of input",
+            ),
+            ParseError::ExpectedIdentInFunParameters(Some(token)) => write!(
+                f,
+                "Expected identifier in function parameter list but found {}",
+                token,
+            ),
+            ParseError::ExpectedIdentInFunParameters(None) => write!(
+                f,
+                "Expected identifier in function parameter list but found end of input",
+            ),
+            ParseError::ExpectedBlockAfterFunHeader(Some(token)) => write!(
+                f,
+                "Expected block after function header but found {}",
+                token,
+            ),
+            ParseError::ExpectedBlockAfterFunHeader(None) => write!(
+                f,
+                "Expected block after function header but found end of input",
+            ),
+            ParseError::ExpectedClosingParenAfterFunParameters(Some(token)) => write!(
+                f,
+                "Expeced closing parenthesis after function parameters but found {}",
+                token,
+            ),
+            ParseError::ExpectedClosingParenAfterFunParameters(None) => write!(
+                f,
+                "Expeced closing parenthesis after function parameters but found end of input",
             ),
             ParseError::ExpectedClosingParenAfterGroupExpr(Some(token)) => write!(
                 f,
@@ -828,7 +936,20 @@ impl fmt::Display for ParseError {
                 write!(f, "Expression {} is not a valid assignment target", expr)
             }
             ParseError::TooManyCallArguments(expr) => {
-                write!(f, "Function {} has too many arguments (max allowed is {})", expr, MAX_FUNCTION_ARGUMENTS)
+                write!(
+                    f,
+                    "Function call {} has too many arguments (max allowed is {})",
+                    expr,
+                    MAX_FUNCTION_ARGUMENTS,
+                )
+            }
+            ParseError::TooManyFunParameters(ident) => {
+                write!(
+                    f,
+                    "Function declaration {} has too many parameters (max allowed is {})",
+                    ident,
+                    MAX_FUNCTION_ARGUMENTS,
+                )
             }
         }
     }
@@ -837,11 +958,11 @@ impl fmt::Display for ParseError {
 pub type ParseResult<T> = Result<T, ParseError>;
 
 pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Program> {
-    let mut ctx = ParserCtx::new(tokens);
+    let mut ctx = ParseCtx::new(tokens);
     let mut stmts = Vec::new();
 
     while ctx.has_more_tokens() {
-        match parse_decl(&mut ctx) {
+        match parse_decl_stmt(&mut ctx) {
             Ok(stmt) => stmts.push(stmt),
             Err(err) => {
                 reporter.report_compile_error(err.to_string());
@@ -857,11 +978,11 @@ pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Program> {
     }
 }
 
-struct ParserCtx<'a> {
+struct ParseCtx<'a> {
     tokens: Peekable<slice::Iter<'a, Token>>,
 }
 
-impl<'a> ParserCtx<'a> {
+impl<'a> ParseCtx<'a> {
     fn new(tokens: &'a [Token]) -> Self {
         Self {
             tokens: tokens.iter().peekable(),
@@ -869,20 +990,8 @@ impl<'a> ParserCtx<'a> {
     }
 
     fn check_token(&mut self, token_value: &TokenValue) -> bool {
-        if let Some(token) = self.peek_token() {
+        if let Some(token) = self.tokens.peek() {
             token.value() == token_value
-        } else {
-            false
-        }
-    }
-
-    fn check_token_ident(&mut self) -> bool {
-        if let Some(token) = self.peek_token() {
-            if let TokenValue::Ident(_) = token.value() {
-                true
-            } else {
-                false
-            }
         } else {
             false
         }
@@ -905,9 +1014,15 @@ impl<'a> ParserCtx<'a> {
         None
     }
 
-    fn read_token_if_ident(&mut self) -> Option<Token> {
-        if self.check_token_ident() {
-            self.read_token()
+    fn read_token_if_ident(&mut self) -> Option<String> {
+        if let Some(token) = self.tokens.peek() {
+            match token.value() {
+                TokenValue::Ident(ident) => {
+                    self.read_token();
+                    Some(ident.to_string())
+                },
+                _ => None,
+            }
         } else {
             None
         }
@@ -953,16 +1068,18 @@ impl<'a> ParserCtx<'a> {
     }
 }
 
-fn parse_decl(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn parse_decl_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     if ctx.read_token_if(&TokenValue::Var).is_some() {
         finish_parse_var_decl_stmt(ctx)
+    } else if ctx.read_token_if(&TokenValue::Fun).is_some() {
+        finish_parse_fun_decl_stmt(ctx)
     } else {
         parse_stmt(ctx)
     }
 }
 
-fn finish_parse_var_decl_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
-    if let Some(ident_token) = ctx.read_token_if_ident() {
+fn finish_parse_var_decl_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
+    if let Some(ident) = ctx.read_token_if_ident() {
         let initializer = if ctx.read_token_if(&TokenValue::Equal).is_some() {
             Some(parse_expr(ctx)?)
         } else {
@@ -970,13 +1087,7 @@ fn finish_parse_var_decl_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
         };
 
         if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
-            match ident_token.value() {
-                TokenValue::Ident(ident) => Ok(Stmt::VarDecl(VarDeclStmt::new(
-                    ident.to_string(),
-                    initializer,
-                ))),
-                _ => unreachable!(),
-            }
+            Ok(Stmt::VarDecl(VarDeclStmt::new(ident, initializer)))
         } else {
             let token = ctx.peek_token().cloned();
             Err(ParseError::ExpectedSemicolonAfterVarDeclStmt(token))
@@ -987,7 +1098,53 @@ fn finish_parse_var_decl_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     }
 }
 
-fn parse_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn finish_parse_fun_decl_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
+    if let Some(fun_ident) = ctx.read_token_if_ident() {
+        if ctx.read_token_if(&TokenValue::LeftParen).is_none() {
+            let token = ctx.peek_token().cloned();
+            return Err(ParseError::ExpectedOpeningParenAfterFunIdent(token));
+        }
+
+        let mut parameters = Vec::new();
+        if !ctx.check_token(&TokenValue::RightParen) {
+            while {
+                if parameters.len() >= MAX_FUNCTION_ARGUMENTS {
+                    // TODO: this unnecessarily throws the parser into
+                    // panic mode, find a way not to do that. Maybe have a
+                    // separate valiation pass?
+                    return Err(ParseError::TooManyFunParameters(fun_ident));
+                }
+
+                if let Some(ident) = ctx.read_token_if_ident() {
+                    parameters.push(ident);
+                } else {
+                    let token = ctx.peek_token().cloned();
+                    return Err(ParseError::ExpectedIdentInFunParameters(token));
+                }
+
+                ctx.read_token_if(&TokenValue::Comma).is_some()
+            } { /*This is a do-while loop*/ }
+        }
+
+        if ctx.read_token_if(&TokenValue::RightParen).is_some() {
+            if ctx.read_token_if(&TokenValue::LeftBrace).is_some() {
+                let body = finish_parse_block_stmt_raw(ctx)?;
+                Ok(Stmt::FunDecl(FunDeclStmt::new(fun_ident, parameters, body)))
+            } else {
+                let token = ctx.peek_token().cloned();
+                Err(ParseError::ExpectedBlockAfterFunHeader(token))
+            }
+        } else {
+            let token = ctx.peek_token().cloned();
+            Err(ParseError::ExpectedClosingParenAfterFunParameters(token))
+        }
+    } else {
+        let token = ctx.peek_token().cloned();
+        Err(ParseError::ExpectedIdentAfterFunKeyword(token))
+    }
+}
+
+fn parse_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     if ctx.read_token_if(&TokenValue::If).is_some() {
         finish_parse_if_stmt(ctx)
     } else if ctx.read_token_if(&TokenValue::For).is_some() {
@@ -1003,7 +1160,7 @@ fn parse_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     }
 }
 
-fn finish_parse_if_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn finish_parse_if_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
         let cond = parse_expr(ctx)?;
         if ctx.read_token_if(&TokenValue::RightParen).is_some() {
@@ -1024,7 +1181,7 @@ fn finish_parse_if_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     }
 }
 
-fn finish_parse_for_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn finish_parse_for_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
         let initializer_stmt = if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
             None
@@ -1103,7 +1260,7 @@ fn finish_parse_for_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     }
 }
 
-fn finish_parse_while_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn finish_parse_while_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
         let cond = parse_expr(ctx)?;
         if ctx.read_token_if(&TokenValue::RightParen).is_some() {
@@ -1119,7 +1276,7 @@ fn finish_parse_while_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     }
 }
 
-fn finish_parse_print_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn finish_parse_print_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     let expr = parse_expr(ctx)?;
     if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
         Ok(Stmt::Print(PrintStmt::new(expr)))
@@ -1130,22 +1287,26 @@ fn finish_parse_print_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     }
 }
 
-fn finish_parse_block_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn finish_parse_block_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
+    finish_parse_block_stmt_raw(ctx).map(|stmts| Stmt::Block(BlockStmt::new(stmts)))
+}
+
+fn finish_parse_block_stmt_raw(ctx: &mut ParseCtx) -> ParseResult<Vec<Stmt>> {
     let mut stmts = Vec::new();
 
     while !ctx.check_token(&TokenValue::RightBrace) && ctx.has_more_tokens() {
-        let stmt = parse_decl(ctx)?;
+        let stmt = parse_decl_stmt(ctx)?;
         stmts.push(stmt);
     }
 
     if ctx.read_token_if(&TokenValue::RightBrace).is_some() {
-        Ok(Stmt::Block(BlockStmt::new(stmts)))
+        Ok(stmts)
     } else {
         Err(ParseError::ExpectedClosingBraceAfterBlockStmt)
     }
 }
 
-fn parse_expr_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
+fn parse_expr_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     let expr = parse_expr(ctx)?;
     if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
         Ok(Stmt::Expr(ExprStmt::new(expr)))
@@ -1155,11 +1316,11 @@ fn parse_expr_stmt(ctx: &mut ParserCtx) -> ParseResult<Stmt> {
     }
 }
 
-fn parse_expr(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_expr(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     parse_assignment(ctx)
 }
 
-fn parse_assignment(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_assignment(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let expr = parse_logic_or(ctx)?;
     if ctx.read_token_if(&TokenValue::Equal).is_some() {
         // Instead of looping through operands like elsewhere, we
@@ -1178,7 +1339,7 @@ fn parse_assignment(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     }
 }
 
-fn parse_logic_or(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_logic_or(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let mut expr = parse_logic_and(ctx)?;
     while ctx.read_token_if(&TokenValue::Or).is_some() {
         let right = parse_logic_and(ctx)?;
@@ -1188,7 +1349,7 @@ fn parse_logic_or(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     Ok(expr)
 }
 
-fn parse_logic_and(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_logic_and(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let mut expr = parse_equality(ctx)?;
     while ctx.read_token_if(&TokenValue::And).is_some() {
         let right = parse_equality(ctx)?;
@@ -1198,7 +1359,7 @@ fn parse_logic_and(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     Ok(expr)
 }
 
-fn parse_equality(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_equality(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let mut expr = parse_comparison(ctx)?;
     while let Some(op_token) =
         ctx.read_token_if_any_of(&[TokenValue::BangEqual, TokenValue::EqualEqual])
@@ -1211,7 +1372,7 @@ fn parse_equality(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     Ok(expr)
 }
 
-fn parse_comparison(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_comparison(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let mut expr = parse_addition(ctx)?;
     while let Some(op_token) = ctx.read_token_if_any_of(&[
         TokenValue::Less,
@@ -1228,7 +1389,7 @@ fn parse_comparison(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     Ok(expr)
 }
 
-fn parse_addition(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_addition(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let mut expr = parse_multiplication(ctx)?;
     while let Some(op_token) = ctx.read_token_if_any_of(&[TokenValue::Plus, TokenValue::Minus]) {
         let right = parse_multiplication(ctx)?;
@@ -1240,7 +1401,7 @@ fn parse_addition(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     Ok(expr)
 }
 
-fn parse_multiplication(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_multiplication(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let mut expr = parse_unary(ctx)?;
     while let Some(op_token) = ctx.read_token_if_any_of(&[TokenValue::Star, TokenValue::Slash]) {
         let right = parse_unary(ctx)?;
@@ -1252,7 +1413,7 @@ fn parse_multiplication(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     Ok(expr)
 }
 
-fn parse_unary(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_unary(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     if let Some(op_token) = ctx.read_token_if_any_of(&[TokenValue::Bang, TokenValue::Minus]) {
         let expr = parse_unary(ctx)?;
         let op = UnaryOp::try_from(op_token.clone()).expect("Token should be a unary op");
@@ -1262,7 +1423,7 @@ fn parse_unary(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     }
 }
 
-fn parse_call(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_call(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let mut expr = parse_primary(ctx)?;
     while ctx.read_token_if(&TokenValue::LeftParen).is_some() {
         expr = finish_parse_call(ctx, expr)?;
@@ -1271,7 +1432,7 @@ fn parse_call(ctx: &mut ParserCtx) -> ParseResult<Expr> {
     Ok(expr)
 }
 
-fn finish_parse_call(ctx: &mut ParserCtx, callee: Expr) -> ParseResult<Expr> {
+fn finish_parse_call(ctx: &mut ParseCtx, callee: Expr) -> ParseResult<Expr> {
     let mut arguments = Vec::new();
     if !ctx.check_token(&TokenValue::RightParen) {
         while {
@@ -1295,7 +1456,7 @@ fn finish_parse_call(ctx: &mut ParserCtx, callee: Expr) -> ParseResult<Expr> {
     }
 }
 
-fn parse_primary(ctx: &mut ParserCtx) -> ParseResult<Expr> {
+fn parse_primary(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     if let Some(token) = ctx.read_token() {
         match token.value() {
             TokenValue::True => Ok(Expr::Lit(LitExpr::Boolean(true))),
