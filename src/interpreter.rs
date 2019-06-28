@@ -110,7 +110,14 @@ impl Callable for Function {
 
         interpreter.pop_env();
 
-        res.map(|()| Value::Nil)
+        match res {
+            // No return statement encountered
+            Ok(()) => Ok(Value::Nil),
+            // Return statement triggered the special `Return` error
+            Err(InterpretError::Return(value)) => Ok(value),
+            // Other error
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -127,9 +134,9 @@ impl Callable for NativeCallableClock {
         let since_the_epoch = now
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::from_secs(0));
-        let millis = since_the_epoch.as_millis();
+        let secs = since_the_epoch.as_millis() as f64 / 1000.0;
 
-        Ok(Value::Number(millis as f64))
+        Ok(Value::Number(secs))
     }
 }
 
@@ -150,6 +157,7 @@ impl fmt::Display for Value {
 // TODO: implement std::fmt::Display
 #[derive(Debug)]
 pub enum InterpretError {
+    Return(Value),
     TypeError,
     ValueNotCallable(Value),
     WrongNumberOfArgumentsToCallable(usize, usize), // TODO: add callable ident
@@ -160,6 +168,7 @@ pub enum InterpretError {
 impl fmt::Display for InterpretError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            InterpretError::Return(value) => write!(f, "Return statement with value {}", value),
             InterpretError::TypeError => write!(f, "Type Error"),
             InterpretError::ValueNotCallable(value) => {
                 write!(f, "Type Error: value not callable {}", value)
@@ -314,6 +323,13 @@ impl Interpreter {
                 println!("{}", value);
 
                 Ok(Value::Nil)
+            }
+            Stmt::Return(return_) => {
+                let value = match return_.expr() {
+                    Some(expr) => self.eval_expr(expr)?,
+                    None => Value::Nil,
+                };
+                Err(InterpretError::Return(value))
             }
             Stmt::Block(block) => {
                 self.push_env();

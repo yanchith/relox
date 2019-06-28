@@ -1,0 +1,16 @@
+fun fib(n) {
+    if (n == 0) {
+        return 0;
+    } else if (n == 1) {
+        return 1;
+    } else {
+        return fib(n - 1) + fib(n - 2);
+    }
+}
+
+var start = clock();
+var f = fib(30);
+var end = clock();
+
+print "Computed fib(30) in (seconds)";
+print end - start;

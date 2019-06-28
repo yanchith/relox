@@ -158,3 +158,23 @@ fun outer() {
 
 print outer();
 
+fun add(a, b) {
+    return a + b;
+}
+
+print add(1, 1);
+print add(2, 3);
+
+fun make_fun() {
+    fun fn(a) {
+        return a + 1;
+    }
+
+    return fn;
+}
+
+var f = make_fun();
+print f;
+print f(0);
+print f(1.23);
+

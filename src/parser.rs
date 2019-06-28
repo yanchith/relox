@@ -30,6 +30,7 @@
 //!           | forStmt
 //!           | whileStmt
 //!           | printStmt
+//!           | returnStmt
 //!           | block ;
 //!
 //! exprStmt  → expr ";" ;
@@ -39,6 +40,7 @@
 //!                       expression? ")" statement ;
 //! whileStmt → "while" "(" expression ")" statement ;
 //! printStmt → "print" expr ";" ;
+//! returnStmt → "return" expression? ";" ;
 //! block     → "{" declaration* "}" ;
 //! ```
 //!
@@ -112,19 +114,21 @@ pub enum Stmt {
     If(IfStmt),
     While(WhileStmt),
     Print(PrintStmt),
+    Return(ReturnStmt),
     Block(BlockStmt),
 }
 
 impl fmt::Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Stmt::VarDecl(var_decl_stmt) => write!(f, "{}", var_decl_stmt),
-            Stmt::FunDecl(fun_decl_stmt) => write!(f, "{}", fun_decl_stmt),
-            Stmt::Expr(expr_stmt) => write!(f, "{}", expr_stmt),
-            Stmt::If(if_stmt) => write!(f, "{}", if_stmt),
-            Stmt::While(loop_) => write!(f, "{}", loop_),
-            Stmt::Print(print_stmt) => write!(f, "{}", print_stmt),
-            Stmt::Block(block_stmt) => write!(f, "{}", block_stmt),
+            Stmt::VarDecl(var_decl) => write!(f, "{}", var_decl),
+            Stmt::FunDecl(fun_decl) => write!(f, "{}", fun_decl),
+            Stmt::Expr(expr) => write!(f, "{}", expr),
+            Stmt::If(if_) => write!(f, "{}", if_),
+            Stmt::While(while_) => write!(f, "{}", while_),
+            Stmt::Print(print) => write!(f, "{}", print),
+            Stmt::Return(return_) => write!(f, "{}", return_),
+            Stmt::Block(block) => write!(f, "{}", block),
         }
     }
 }
@@ -325,6 +329,30 @@ impl PrintStmt {
 impl fmt::Display for PrintStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "(print {})", self.expr)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReturnStmt {
+    expr: Option<Expr>,
+}
+
+impl ReturnStmt {
+    pub fn new(expr: Option<Expr>) -> Self {
+        Self { expr }
+    }
+
+    pub fn expr(&self) -> Option<&Expr> {
+        self.expr.as_ref()
+    }
+}
+
+impl fmt::Display for ReturnStmt {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.expr {
+            Some(expr) => write!(f, "(return {})", expr),
+            None => write!(f, "(return)"),
+        }
     }
 }
 
@@ -734,6 +762,7 @@ impl fmt::Display for LogicOp {
 pub enum ParseError {
     ExpectedSemicolonAfterExprStmt(Option<Token>),
     ExpectedSemicolonAfterPrintStmt(Option<Token>),
+    ExpectedSemicolonAfterReturnStmt(Option<Token>),
     ExpectedSemicolonAfterVarDeclStmt(Option<Token>),
     ExpectedIdentAfterVarKeyword(Option<Token>),
     ExpectedIdentAfterFunKeyword(Option<Token>),
@@ -777,6 +806,15 @@ impl fmt::Display for ParseError {
             ParseError::ExpectedSemicolonAfterPrintStmt(None) => write!(
                 f,
                 "Expected semicolon after print statement but found end of input",
+            ),
+            ParseError::ExpectedSemicolonAfterReturnStmt(Some(token)) => write!(
+                f,
+                "Expected semicolon after return statement but found token {}",
+                token,
+            ),
+            ParseError::ExpectedSemicolonAfterReturnStmt(None) => write!(
+                f,
+                "Expected semicolon after return statement but found end of input",
             ),
             ParseError::ExpectedSemicolonAfterVarDeclStmt(Some(token)) => write!(
                 f,
@@ -1020,7 +1058,7 @@ impl<'a> ParseCtx<'a> {
                 TokenValue::Ident(ident) => {
                     self.read_token();
                     Some(ident.to_string())
-                },
+                }
                 _ => None,
             }
         } else {
@@ -1153,6 +1191,8 @@ fn parse_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
         finish_parse_while_stmt(ctx)
     } else if ctx.read_token_if(&TokenValue::Print).is_some() {
         finish_parse_print_stmt(ctx)
+    } else if ctx.read_token_if(&TokenValue::Return).is_some() {
+        finish_parse_return_stmt(ctx)
     } else if ctx.read_token_if(&TokenValue::LeftBrace).is_some() {
         finish_parse_block_stmt(ctx)
     } else {
@@ -1281,9 +1321,22 @@ fn finish_parse_print_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
         Ok(Stmt::Print(PrintStmt::new(expr)))
     } else {
-        Err(ParseError::ExpectedSemicolonAfterPrintStmt(
-            ctx.peek_token().cloned(),
-        ))
+        let token = ctx.peek_token().cloned();
+        Err(ParseError::ExpectedSemicolonAfterPrintStmt(token))
+    }
+}
+
+fn finish_parse_return_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
+    if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
+        Ok(Stmt::Return(ReturnStmt::new(None)))
+    } else {
+        let expr = parse_expr(ctx)?;
+        if ctx.read_token_if(&TokenValue::Semicolon).is_some() {
+            Ok(Stmt::Return(ReturnStmt::new(Some(expr))))
+        } else {
+            let token = ctx.peek_token().cloned();
+            Err(ParseError::ExpectedSemicolonAfterReturnStmt(token))
+        }
     }
 }
 
