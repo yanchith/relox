@@ -22,8 +22,8 @@
 //!             | statement ;
 //!
 //! funDeclStmt → "fun" function ;
-//! function    → IDENTIFIER "(" parameters? ")" block ;
-//! parameters  → IDENTIFIER ( "," IDENTIFIER )* ;
+//! function    → IDENTIFIER "(" params? ")" block ;
+//! params      → IDENTIFIER ( "," IDENTIFIER )* ;
 //!
 //! statement → exprStmt
 //!           | ifStmt
@@ -61,11 +61,11 @@
 //! multiplication → unary ( ( "/" | "*" ) unary )* ;
 //! unary          → ( "!" | "-" ) unary
 //!                | call ;
-//! call           → primary ( "(" arguments? ")" )* ;
+//! call           → primary ( "(" args? ")" )* ;
 //! primary        → NUMBER | STRING | "false" | "true" | "nil"
 //!                | "(" expr ")" ;
 //!
-//! arguments      → expression ( "," expression )* ;
+//! args           → expression ( "," expression )* ;
 //! ```
 
 use std::convert::TryFrom;
@@ -165,15 +165,15 @@ impl fmt::Display for VarDeclStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunDeclStmt {
     ident: String, // TODO: indern idents
-    parameters: Vec<String>,
+    params: Vec<String>,
     body: Vec<Stmt>,
 }
 
 impl FunDeclStmt {
-    pub fn new(ident: String, parameters: Vec<String>, body: Vec<Stmt>) -> Self {
+    pub fn new(ident: String, params: Vec<String>, body: Vec<Stmt>) -> Self {
         Self {
             ident,
-            parameters,
+            params,
             body,
         }
     }
@@ -183,8 +183,8 @@ impl FunDeclStmt {
     }
 
     // TODO: try using &[&str] as return type
-    pub fn parameters(&self) -> &[String] {
-        &self.parameters
+    pub fn params(&self) -> &[String] {
+        &self.params
     }
 
     pub fn body(&self) -> &[Stmt] {
@@ -194,11 +194,11 @@ impl FunDeclStmt {
 
 impl fmt::Display for FunDeclStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("(fun (parameters")?;
+        f.write_str("(fun (params")?;
 
-        for parameter in &self.parameters {
+        for param in &self.params {
             f.write_str(" ")?;
-            f.write_str(parameter)?;
+            f.write_str(param)?;
         }
         f.write_str(")")?;
 
@@ -609,14 +609,14 @@ impl fmt::Display for AssignmentExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallExpr {
     callee: Box<Expr>,
-    arguments: Vec<Expr>,
+    args: Vec<Expr>,
 }
 
 impl CallExpr {
-    pub fn new(callee: Expr, arguments: Vec<Expr>) -> Self {
+    pub fn new(callee: Expr, args: Vec<Expr>) -> Self {
         Self {
             callee: Box::new(callee),
-            arguments,
+            args,
         }
     }
 
@@ -624,8 +624,8 @@ impl CallExpr {
         &self.callee
     }
 
-    pub fn arguments(&self) -> &[Expr] {
-        &self.arguments
+    pub fn args(&self) -> &[Expr] {
+        &self.args
     }
 }
 
@@ -633,9 +633,9 @@ impl fmt::Display for CallExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "(call {}", self.callee)?;
 
-        for argument in &self.arguments {
+        for arg in &self.args {
             f.write_str(" ")?;
-            f.write_str(&argument.to_string())?;
+            f.write_str(&arg.to_string())?;
         }
 
         f.write_str(")")?;
@@ -767,9 +767,9 @@ pub enum ParseError {
     ExpectedIdentAfterVarKeyword(Option<Token>),
     ExpectedIdentAfterFunKeyword(Option<Token>),
     ExpectedOpeningParenAfterFunIdent(Option<Token>),
-    ExpectedIdentInFunParameters(Option<Token>),
+    ExpectedIdentInFunParams(Option<Token>),
     ExpectedBlockAfterFunHeader(Option<Token>),
-    ExpectedClosingParenAfterFunParameters(Option<Token>),
+    ExpectedClosingParenAfterFunParams(Option<Token>),
     ExpectedClosingParenAfterGroupExpr(Option<Token>),
     ExpectedClosingBraceAfterBlockStmt,
     ExpectedOpeningParenAfterIf(Option<Token>),
@@ -782,8 +782,8 @@ pub enum ParseError {
     ExpectedClosingParenAfterCall(Option<Token>),
     ExpectedPrimaryExpr(Option<Token>),
     InvalidAssignmentTarget(Expr),
-    TooManyCallArguments(Expr),
-    TooManyFunParameters(String),
+    TooManyCallArgs(Expr),
+    TooManyFunParams(String),
 }
 
 impl fmt::Display for ParseError {
@@ -852,12 +852,12 @@ impl fmt::Display for ParseError {
                 f,
                 "Expected opening parenthesis after function identifier but found end of input",
             ),
-            ParseError::ExpectedIdentInFunParameters(Some(token)) => write!(
+            ParseError::ExpectedIdentInFunParams(Some(token)) => write!(
                 f,
                 "Expected identifier in function parameter list but found {}",
                 token,
             ),
-            ParseError::ExpectedIdentInFunParameters(None) => write!(
+            ParseError::ExpectedIdentInFunParams(None) => write!(
                 f,
                 "Expected identifier in function parameter list but found end of input",
             ),
@@ -870,14 +870,14 @@ impl fmt::Display for ParseError {
                 f,
                 "Expected block after function header but found end of input",
             ),
-            ParseError::ExpectedClosingParenAfterFunParameters(Some(token)) => write!(
+            ParseError::ExpectedClosingParenAfterFunParams(Some(token)) => write!(
                 f,
-                "Expeced closing parenthesis after function parameters but found {}",
+                "Expeced closing parenthesis after function params but found {}",
                 token,
             ),
-            ParseError::ExpectedClosingParenAfterFunParameters(None) => write!(
+            ParseError::ExpectedClosingParenAfterFunParams(None) => write!(
                 f,
-                "Expeced closing parenthesis after function parameters but found end of input",
+                "Expeced closing parenthesis after function params but found end of input",
             ),
             ParseError::ExpectedClosingParenAfterGroupExpr(Some(token)) => write!(
                 f,
@@ -973,20 +973,20 @@ impl fmt::Display for ParseError {
             ParseError::InvalidAssignmentTarget(expr) => {
                 write!(f, "Expression {} is not a valid assignment target", expr)
             }
-            ParseError::TooManyCallArguments(expr) => {
+            ParseError::TooManyCallArgs(expr) => {
                 write!(
                     f,
-                    "Function call {} has too many arguments (max allowed is {})",
+                    "Function call {} has too many args (max allowed is {})",
                     expr,
-                    MAX_FUNCTION_ARGUMENTS,
+                    MAX_FUNCTION_ARGS,
                 )
             }
-            ParseError::TooManyFunParameters(ident) => {
+            ParseError::TooManyFunParams(ident) => {
                 write!(
                     f,
-                    "Function declaration {} has too many parameters (max allowed is {})",
+                    "Function declaration {} has too many params (max allowed is {})",
                     ident,
-                    MAX_FUNCTION_ARGUMENTS,
+                    MAX_FUNCTION_ARGS,
                 )
             }
         }
@@ -1143,21 +1143,21 @@ fn finish_parse_fun_decl_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
             return Err(ParseError::ExpectedOpeningParenAfterFunIdent(token));
         }
 
-        let mut parameters = Vec::new();
+        let mut params = Vec::new();
         if !ctx.check_token(&TokenValue::RightParen) {
             while {
-                if parameters.len() >= MAX_FUNCTION_ARGUMENTS {
+                if params.len() >= MAX_FUNCTION_ARGS {
                     // TODO: this unnecessarily throws the parser into
                     // panic mode, find a way not to do that. Maybe have a
                     // separate valiation pass?
-                    return Err(ParseError::TooManyFunParameters(fun_ident));
+                    return Err(ParseError::TooManyFunParams(fun_ident));
                 }
 
                 if let Some(ident) = ctx.read_token_if_ident() {
-                    parameters.push(ident);
+                    params.push(ident);
                 } else {
                     let token = ctx.peek_token().cloned();
-                    return Err(ParseError::ExpectedIdentInFunParameters(token));
+                    return Err(ParseError::ExpectedIdentInFunParams(token));
                 }
 
                 ctx.read_token_if(&TokenValue::Comma).is_some()
@@ -1167,14 +1167,14 @@ fn finish_parse_fun_decl_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
         if ctx.read_token_if(&TokenValue::RightParen).is_some() {
             if ctx.read_token_if(&TokenValue::LeftBrace).is_some() {
                 let body = finish_parse_block_stmt_raw(ctx)?;
-                Ok(Stmt::FunDecl(FunDeclStmt::new(fun_ident, parameters, body)))
+                Ok(Stmt::FunDecl(FunDeclStmt::new(fun_ident, params, body)))
             } else {
                 let token = ctx.peek_token().cloned();
                 Err(ParseError::ExpectedBlockAfterFunHeader(token))
             }
         } else {
             let token = ctx.peek_token().cloned();
-            Err(ParseError::ExpectedClosingParenAfterFunParameters(token))
+            Err(ParseError::ExpectedClosingParenAfterFunParams(token))
         }
     } else {
         let token = ctx.peek_token().cloned();
@@ -1486,23 +1486,23 @@ fn parse_call(ctx: &mut ParseCtx) -> ParseResult<Expr> {
 }
 
 fn finish_parse_call(ctx: &mut ParseCtx, callee: Expr) -> ParseResult<Expr> {
-    let mut arguments = Vec::new();
+    let mut args = Vec::new();
     if !ctx.check_token(&TokenValue::RightParen) {
         while {
-            if arguments.len() >= MAX_FUNCTION_ARGUMENTS {
+            if args.len() >= MAX_FUNCTION_ARGS {
                 // TODO: this unnecessarily throws the parser into
                 // panic mode, find a way not to do that. Maybe have a
                 // separate valiation pass?
-                return Err(ParseError::TooManyCallArguments(callee));
+                return Err(ParseError::TooManyCallArgs(callee));
             }
             let expr = parse_expr(ctx)?;
-            arguments.push(expr);
+            args.push(expr);
             ctx.read_token_if(&TokenValue::Comma).is_some()
         } { /*This is a do-while loop*/ }
     }
 
     if ctx.read_token_if(&TokenValue::RightParen).is_some() {
-        Ok(Expr::Call(CallExpr::new(callee, arguments)))
+        Ok(Expr::Call(CallExpr::new(callee, args)))
     } else {
         let token = ctx.peek_token().cloned();
         Err(ParseError::ExpectedClosingParenAfterCall(token))
@@ -1536,4 +1536,4 @@ fn parse_primary(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     }
 }
 
-const MAX_FUNCTION_ARGUMENTS: usize = 32;
+const MAX_FUNCTION_ARGS: usize = 32;

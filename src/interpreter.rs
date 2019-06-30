@@ -1,9 +1,11 @@
+use std::cell::RefCell;
 use std::cmp::PartialEq;
 use std::fmt;
+use std::mem;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::environment::{AssignError, Environment};
+use crate::env::{AssignError, Env};
 use crate::parser::{
     AssignmentExpr, BinaryExpr, BinaryOp, CallExpr, Expr, FunDeclStmt, GroupExpr, LitExpr,
     LogicExpr, LogicOp, Program, Stmt, UnaryExpr, UnaryOp, VarExpr,
@@ -51,12 +53,8 @@ impl CallableValue {
         self.callable.arity()
     }
 
-    pub fn call(
-        &self,
-        interpreter: &mut Interpreter,
-        arguments: &[Value],
-    ) -> InterpretResult<Value> {
-        self.callable.call(interpreter, arguments)
+    pub fn call(&self, interpreter: &mut Interpreter, args: &[Value]) -> InterpretResult<Value> {
+        self.callable.call(interpreter, args)
     }
 }
 
@@ -75,40 +73,43 @@ impl fmt::Display for CallableValue {
 
 pub trait Callable: fmt::Debug {
     fn arity(&self) -> usize;
-    fn call(&self, interpreter: &mut Interpreter, arguments: &[Value]) -> InterpretResult<Value>;
+    fn call(&self, interpreter: &mut Interpreter, args: &[Value]) -> InterpretResult<Value>;
 }
 
 #[derive(Debug)]
 struct Function {
     fun: FunDeclStmt,
+    env: Rc<RefCell<Env>>,
 }
 
 impl Function {
-    pub fn new(fun: FunDeclStmt) -> Self {
-        Self { fun }
+    pub fn new(fun: FunDeclStmt, env: Rc<RefCell<Env>>) -> Self {
+        Self { fun, env }
     }
 }
 
 impl Callable for Function {
     fn arity(&self) -> usize {
-        self.fun.parameters().len()
+        self.fun.params().len()
     }
 
-    fn call(&self, interpreter: &mut Interpreter, arguments: &[Value]) -> InterpretResult<Value> {
+    fn call(&self, interpreter: &mut Interpreter, args: &[Value]) -> InterpretResult<Value> {
         assert_eq!(
-            self.fun.parameters().len(),
-            arguments.len(),
-            "Exact number of arguments must be provided",
+            self.fun.params().len(),
+            args.len(),
+            "Exact number of args must be provided",
         );
 
-        interpreter.push_env();
-        for (param, arg) in self.fun.parameters().iter().zip(arguments.iter()) {
-            interpreter.define(param.to_string(), arg.clone());
+        let mut new_env = Env::with_parent(Rc::clone(&self.env));
+        for (param, arg) in self.fun.params().iter().zip(args.iter()) {
+            new_env.define(param.to_string(), arg.clone());
         }
+
+        let old_env = interpreter.replace_env(Rc::new(RefCell::new(new_env)));
 
         let res = interpreter.interpret_stmts(self.fun.body());
 
-        interpreter.pop_env();
+        interpreter.set_env(old_env);
 
         match res {
             // No return statement encountered
@@ -160,8 +161,8 @@ pub enum InterpretError {
     Return(Value),
     TypeError,
     ValueNotCallable(Value),
-    WrongNumberOfArgumentsToCallable(usize, usize), // TODO: add callable ident
-    UndeclaredVariableUse,                          // TODO: add variable name
+    WrongNumberOfArgsToCallable(usize, usize), // TODO: add callable ident
+    UndeclaredVariableUse,                     // TODO: add variable name
     UndeclaredVariableAssignment(String),
 }
 
@@ -173,9 +174,9 @@ impl fmt::Display for InterpretError {
             InterpretError::ValueNotCallable(value) => {
                 write!(f, "Type Error: value not callable {}", value)
             }
-            InterpretError::WrongNumberOfArgumentsToCallable(provided, required) => write!(
+            InterpretError::WrongNumberOfArgsToCallable(provided, required) => write!(
                 f,
-                "Wrong number of arguments passed to callable (provided {}, required {})",
+                "Wrong number of args passed to callable (provided {}, required {})",
                 provided, required,
             ),
             InterpretError::UndeclaredVariableUse => write!(f, "Use of undeclared variable"),
@@ -189,21 +190,19 @@ impl fmt::Display for InterpretError {
 pub type InterpretResult<T> = Result<T, InterpretError>;
 
 pub struct Interpreter {
-    // Even thogh this is an `Option`, one should never observe `None`
-    // here outside of `push_env()` and `pop_env()`
-    environment: Option<Environment>,
+    env: Rc<RefCell<Env>>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
-        let mut environment = Environment::new();
-        environment.define(
+        let mut env = Env::new();
+        env.define(
             "clock".to_string(),
             Value::Callable(CallableValue::new(Box::new(NativeCallableClock))),
         );
 
         Self {
-            environment: Some(environment),
+            env: Rc::new(RefCell::new(env)),
         }
     }
 
@@ -232,52 +231,12 @@ impl Interpreter {
         Ok(())
     }
 
-    fn push_env(&mut self) {
-        assert!(
-            self.environment.is_some(),
-            "Environment must be present at all times",
-        );
-
-        let outer_environment = self
-            .environment
-            .take()
-            .expect("Environment must be present at all times");
-        let inner_environment = Environment::with_parent(outer_environment);
-        self.environment.replace(inner_environment);
-
-        assert!(
-            self.environment.is_some(),
-            "Environment must be present at all times",
-        );
+    fn replace_env(&mut self, new_env: Rc<RefCell<Env>>) -> Rc<RefCell<Env>> {
+        mem::replace(&mut self.env, new_env)
     }
 
-    fn pop_env(&mut self) {
-        assert!(
-            self.environment.is_some(),
-            "Environment must be present at all times",
-        );
-
-        let inner_environment = self
-            .environment
-            .take()
-            .expect("Environment must be present at all times");
-        let outer_environment = inner_environment
-            .into_parent()
-            .expect("Must be able to pop a parent environment from a local one");
-        self.environment.replace(outer_environment);
-
-        assert!(
-            self.environment.is_some(),
-            "Environment must be present at all times",
-        );
-    }
-
-    fn define(&mut self, ident: String, value: Value) {
-        // TODO: intern idents to prevent cloning
-        self.environment
-            .as_mut()
-            .expect("Environment must be present at all times")
-            .define(ident, value);
+    fn set_env(&mut self, new_env: Rc<RefCell<Env>>) {
+        self.env = new_env;
     }
 
     fn eval_stmt(&mut self, stmt: &Stmt) -> InterpretResult<Value> {
@@ -288,15 +247,19 @@ impl Interpreter {
                     None => Value::Nil,
                 };
 
-                self.define(var_decl.ident().to_string(), value);
+                self.env
+                    .borrow_mut()
+                    .define(var_decl.ident().to_string(), value);
 
                 Ok(Value::Nil)
             }
             Stmt::FunDecl(fun_decl) => {
-                let function = Function::new(fun_decl.clone());
+                let function = Function::new(fun_decl.clone(), Rc::clone(&self.env));
                 let fun = Value::Callable(CallableValue::new(Box::new(function)));
 
-                self.define(fun_decl.ident().to_string(), fun);
+                self.env
+                    .borrow_mut()
+                    .define(fun_decl.ident().to_string(), fun);
 
                 Ok(Value::Nil)
             }
@@ -332,9 +295,12 @@ impl Interpreter {
                 Err(InterpretError::Return(value))
             }
             Stmt::Block(block) => {
-                self.push_env();
+                let new_env = Env::with_parent(Rc::clone(&self.env));
+                let old_env = mem::replace(&mut self.env, Rc::new(RefCell::new(new_env)));
+
                 let res = self.interpret_stmts(block.stmts());
-                self.pop_env();
+
+                self.env = old_env;
 
                 res.map(|()| Value::Nil)
             }
@@ -461,11 +427,9 @@ impl Interpreter {
     }
 
     fn eval_var(&self, var: &VarExpr) -> InterpretResult<Value> {
-        self.environment
-            .as_ref()
-            .expect("Environment must be present at all times")
+        self.env
+            .borrow()
             .get(var.ident())
-            .cloned()
             .ok_or(InterpretError::UndeclaredVariableUse)
     }
 
@@ -473,12 +437,9 @@ impl Interpreter {
         let lvalue = assignment.target();
         let rvalue = self.eval_expr(assignment.expr())?;
 
-        let environment = self
-            .environment
-            .as_mut()
-            .expect("Environment must be present at all times");
+        let mut env = self.env.borrow_mut();
 
-        match environment.assign(lvalue.ident(), rvalue.clone()) {
+        match env.assign(lvalue.ident(), rvalue.clone()) {
             Ok(()) => Ok(rvalue),
             Err(AssignError::ValueNotDeclared) => {
                 let ident = lvalue.ident().to_string();
@@ -491,22 +452,22 @@ impl Interpreter {
         let callee = self.eval_expr(call.callee())?;
 
         if let Value::Callable(callable_value) = callee {
-            let provided_args_len = call.arguments().len();
+            let provided_args_len = call.args().len();
             let required_args_len = callable_value.arity();
             if provided_args_len != required_args_len {
-                Err(InterpretError::WrongNumberOfArgumentsToCallable(
+                Err(InterpretError::WrongNumberOfArgsToCallable(
                     provided_args_len,
                     required_args_len,
                 ))
             } else {
-                let mut arguments = Vec::with_capacity(call.arguments().len());
+                let mut args = Vec::with_capacity(call.args().len());
 
-                for argument_expr in call.arguments() {
-                    let arg = self.eval_expr(argument_expr)?;
-                    arguments.push(arg);
+                for arg_expr in call.args() {
+                    let arg = self.eval_expr(arg_expr)?;
+                    args.push(arg);
                 }
 
-                callable_value.call(self, &arguments)
+                callable_value.call(self, &args)
             }
         } else {
             Err(InterpretError::ValueNotCallable(callee))

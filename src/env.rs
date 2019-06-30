@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::interpreter::Value;
 
@@ -7,13 +9,14 @@ pub enum AssignError {
     ValueNotDeclared,
 }
 
-pub struct Environment {
-    parent: Option<Box<Environment>>,
+#[derive(Debug)]
+pub struct Env {
+    parent: Option<Rc<RefCell<Env>>>,
     // TODO: intern idents!
     values: HashMap<String, Value>,
 }
 
-impl Environment {
+impl Env {
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -21,18 +24,10 @@ impl Environment {
         }
     }
 
-    pub fn with_parent(parent: Self) -> Self {
+    pub fn with_parent(parent: Rc<RefCell<Self>>) -> Self {
         Self {
-            parent: Some(Box::new(parent)),
+            parent: Some(parent),
             values: HashMap::new(),
-        }
-    }
-
-    pub fn into_parent(self) -> Option<Self> {
-        if let Some(parent) = self.parent {
-            Some(*parent)
-        } else {
-            None
         }
     }
 
@@ -44,17 +39,18 @@ impl Environment {
         if let Some(value) = self.values.get_mut(ident) {
             *value = new_value;
             Ok(())
-        } else if let Some(parent) = &mut self.parent {
+        } else if let Some(parent) = &self.parent {
+            let mut parent = parent.borrow_mut();
             parent.assign(ident, new_value)
         } else {
             Err(AssignError::ValueNotDeclared)
         }
     }
 
-    pub fn get(&self, ident: &str) -> Option<&Value> {
-        self.values.get(ident).or_else(|| {
+    pub fn get(&self, ident: &str) -> Option<Value> {
+        self.values.get(ident).cloned().or_else(|| {
             if let Some(parent) = &self.parent {
-                parent.get(ident)
+                parent.borrow().get(ident)
             } else {
                 None
             }

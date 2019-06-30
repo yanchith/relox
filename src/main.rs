@@ -3,20 +3,20 @@ use std::io::{self, Write};
 use crate::interpreter::Interpreter;
 use crate::reporter::Reporter;
 
-mod environment;
+mod env;
 mod interpreter;
 mod lexer;
 mod parser;
 mod reporter;
 
 fn main() {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let arguments_len = arguments.len();
-    if arguments_len > 1 {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args_len = args.len();
+    if args_len > 1 {
         eprintln!("Usage: relox [script]");
         std::process::exit(64);
-    } else if arguments_len == 1 {
-        run_file(arguments[0].clone());
+    } else if args_len == 1 {
+        run_file(args[0].clone());
     } else {
         run_prompt();
     }

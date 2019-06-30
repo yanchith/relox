@@ -254,8 +254,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                     Some(Token::new(TokenValue::Number(number), number_span))
                 } else {
                     // TODO: get span of number we were trying to parse and report that!
-                    reporter
-                        .report_compile_error(format!("Invalid number on line: {}", span.line));
+                    reporter.report_compile_error(format!("Invalid number on line: {}", span.line));
                     break;
                 }
             }

@@ -134,47 +134,75 @@
 // Function declarations
 ////////////////////////
 
-fun foo() {
-    print "Hello, World!";
-}
+// fun foo() {
+//     print "Hello, World!";
+// }
 
-foo;
-foo();
+// foo;
+// foo();
 
-var bar = foo;
-bar;
-bar();
+// var bar = foo;
+// bar;
+// bar();
 
-fun outer() {
-    fun inner(p) {
-        print "inner param:";
-        print p;
+// fun outer() {
+//     fun inner(p) {
+//         print "inner param:";
+//         print p;
+//     }
+
+//     print "outer calling inner";
+//     inner(3.14);
+//     print "outer called inner";
+// }
+
+// print outer();
+
+// fun add(a, b) {
+//     return a + b;
+// }
+
+// print add(1, 1);
+// print add(2, 3);
+
+// fun make_fun() {
+//     fun fn(a) {
+//         return a + 1;
+//     }
+
+//     return fn;
+// }
+
+// var f = make_fun();
+// print f;
+// print f(0);
+// print f(1.23);
+
+///////////
+// Closures
+///////////
+
+var mutate_func;
+var print_func;
+{
+    var i = 0;
+    fun mutate_i() {
+        i = i + 1;
+    }
+    fun print_i() {
+        print i;
     }
 
-    print "outer calling inner";
-    inner(3.14);
-    print "outer called inner";
+    mutate_i();
+    print_i();
+
+    mutate_func = mutate_i;
+    print_func = print_i;
 }
 
-print outer();
-
-fun add(a, b) {
-    return a + b;
-}
-
-print add(1, 1);
-print add(2, 3);
-
-fun make_fun() {
-    fun fn(a) {
-        return a + 1;
-    }
-
-    return fn;
-}
-
-var f = make_fun();
-print f;
-print f(0);
-print f(1.23);
-
+mutate_func();
+print_func();
+mutate_func();
+print_func();
+mutate_func();
+print_func();
