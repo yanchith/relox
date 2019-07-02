@@ -187,10 +187,11 @@ impl fmt::Display for InterpretError {
 
 pub type InterpretResult<T> = Result<T, InterpretError>;
 
+#[derive(Debug)]
 pub struct Interpreter {
     env: Rc<RefCell<Env>>,
     globals: Rc<RefCell<Env>>,
-    locals: HashMap<u64, u32>,
+    locals: HashMap<u64, u64>,
 }
 
 impl Interpreter {
@@ -210,7 +211,7 @@ impl Interpreter {
         }
     }
 
-    pub fn resolve(&mut self, ast_id: u64, distance: u32) {
+    pub fn resolve(&mut self, ast_id: u64, distance: u64) {
         self.locals.insert(ast_id, distance);
     }
 
@@ -263,11 +264,11 @@ impl Interpreter {
             }
             parser::Stmt::FunDecl(fun_decl) => {
                 let function = Function::new(fun_decl.clone(), Rc::clone(&self.env));
-                let fun = Value::Callable(CallableValue::new(Box::new(function)));
+                let callable = Value::Callable(CallableValue::new(Box::new(function)));
 
                 self.env
                     .borrow_mut()
-                    .define(fun_decl.ident().to_string(), fun);
+                    .define(fun_decl.ident().to_string(), callable);
 
                 Ok(Value::Nil)
             }

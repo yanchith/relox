@@ -221,12 +221,12 @@ var point = makePoint(2, 3);
 print point("x"); // "2".
 print point("y"); // "3".
 
-fun scope(a) {
-    print a;
-    var a = "inner";
-    print a;
-}
-scope("param");
+// fun scope(s) {
+//     print s;
+//     var s = "inner";
+//     print s;
+// }
+// scope("param");
 
 // Nasty closure leak
 
@@ -247,6 +247,9 @@ var a = "global";
 }
 
 // fun bad() {
-//     var a = 1;
-//     var a = "a";
+//     var double_decl = 1;
+//     var double_decl = "a";
 // }
+
+// Also bad!
+// return "foo";

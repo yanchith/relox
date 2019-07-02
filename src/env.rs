@@ -47,7 +47,7 @@ impl Env {
         }
     }
 
-    pub fn assign_at_distance(&mut self, ident: &str, distance: u32, new_value: Value) {
+    pub fn assign_at_distance(&mut self, ident: &str, distance: u64, new_value: Value) {
         if distance == 0 {
             let value_ptr = self
                 .values
@@ -73,7 +73,7 @@ impl Env {
         })
     }
 
-    pub fn get_at_distance(&self, ident: &str, distance: u32) -> Value {
+    pub fn get_at_distance(&self, ident: &str, distance: u64) -> Value {
         if distance == 0 {
             self.values
                 .get(ident)

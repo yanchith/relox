@@ -1,4 +1,5 @@
 use std::collections::hash_map::{Entry, HashMap};
+use std::convert::TryFrom;
 use std::fmt;
 
 use crate::interpreter::Interpreter;
@@ -10,6 +11,7 @@ use crate::reporter::Reporter;
 pub enum ResolveError {
     VarReadsItselfInInitializer(String),
     VarRedeclaredInLocalScope(String),
+    TopLevelReturnStatement,
 }
 
 impl fmt::Display for ResolveError {
@@ -21,7 +23,10 @@ impl fmt::Display for ResolveError {
                 ident,
             ),
             ResolveError::VarRedeclaredInLocalScope(ident) => {
-                write!(f, "Variable '{}' already declared in this scope", ident,)
+                write!(f, "Variable '{}' already declared in this scope", ident)
+            }
+            ResolveError::TopLevelReturnStatement => {
+                write!(f, "Can't use top level return statement")
             }
         }
     }
@@ -38,9 +43,17 @@ pub fn resolve(reporter: &mut Reporter, interpreter: &mut Interpreter, stmts: &[
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum FunctionTy {
+    None,
+    Function,
+}
+
+#[derive(Debug)]
 struct ResolveCtx<'a> {
     interpreter: &'a mut Interpreter,
     scopes: Vec<HashMap<String, bool>>,
+    current_function: FunctionTy,
 }
 
 impl<'a> ResolveCtx<'a> {
@@ -48,6 +61,7 @@ impl<'a> ResolveCtx<'a> {
         Self {
             interpreter,
             scopes: Vec::new(),
+            current_function: FunctionTy::None,
         }
     }
 
@@ -57,6 +71,14 @@ impl<'a> ResolveCtx<'a> {
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
+    }
+
+    fn current_function(&self) -> FunctionTy {
+        self.current_function
+    }
+
+    fn set_current_function(&mut self, function: FunctionTy) {
+        self.current_function = function;
     }
 
     fn declare(&mut self, ident: &str) -> ResolveResult {
@@ -86,13 +108,14 @@ impl<'a> ResolveCtx<'a> {
     }
 
     fn write_resolution(&mut self, ast_id: u64, ident: &str) {
-        let mut distance: u32 = 0;
-        for scope in self.scopes.iter().rev() {
+        for (distance, scope) in self.scopes.iter().rev().enumerate() {
             if scope.contains_key(ident) {
-                self.interpreter.resolve(ast_id, distance);
+                self.interpreter.resolve(
+                    ast_id,
+                    u64::try_from(distance).expect("Scope distance too large"),
+                );
                 return;
             }
-            distance += 1;
         }
     }
 }
@@ -119,6 +142,13 @@ fn resolve_stmt(ctx: &mut ResolveCtx, stmt: &parser::Stmt) -> ResolveResult {
 }
 
 fn resolve_var_decl_stmt(ctx: &mut ResolveCtx, var_decl: &parser::VarDeclStmt) -> ResolveResult {
+    // We first declare the variable, then resolve the initializer,
+    // and only afterwards mark the variable as defined. This is
+    // because the initializer expression lives in the same scope as
+    // the variable declaration and could potentially refer to itself
+    // (which we forbid by not allowing use of declared but not yet
+    // defined variables).
+
     ctx.declare(var_decl.ident())?;
     if let Some(initializer) = var_decl.initializer() {
         resolve_expr(ctx, initializer)?;
@@ -132,6 +162,8 @@ fn resolve_fun_decl_stmt(ctx: &mut ResolveCtx, fun_decl: &parser::FunDeclStmt) -
     ctx.declare(fun_decl.ident())?;
     ctx.define(fun_decl.ident());
 
+    let enclosing_function = ctx.current_function();
+    ctx.set_current_function(FunctionTy::Function);
     ctx.push_scope();
     for param in fun_decl.params() {
         ctx.declare(param)?;
@@ -139,6 +171,7 @@ fn resolve_fun_decl_stmt(ctx: &mut ResolveCtx, fun_decl: &parser::FunDeclStmt) -
     }
     resolve_stmts(ctx, fun_decl.body())?;
     ctx.pop_scope();
+    ctx.set_current_function(enclosing_function);
 
     Ok(())
 }
@@ -169,11 +202,13 @@ fn resolve_print_stmt(ctx: &mut ResolveCtx, print: &parser::PrintStmt) -> Resolv
 }
 
 fn resolve_return_stmt(ctx: &mut ResolveCtx, return_: &parser::ReturnStmt) -> ResolveResult {
-    if let Some(expr) = return_.expr() {
-        resolve_expr(ctx, expr)?;
+    if let FunctionTy::None = ctx.current_function() {
+        Err(ResolveError::TopLevelReturnStatement)
+    } else if let Some(expr) = return_.expr() {
+        resolve_expr(ctx, expr)
+    } else {
+        Ok(())
     }
-
-    Ok(())
 }
 
 fn resolve_block_stmt(ctx: &mut ResolveCtx, block: &parser::BlockStmt) -> ResolveResult {
