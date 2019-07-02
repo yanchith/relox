@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::hash_map::{Entry, HashMap};
 use std::fmt;
 
 use crate::interpreter::Interpreter;
@@ -6,8 +6,10 @@ use crate::parser;
 use crate::reporter::Reporter;
 
 // TODO: impl error::Error;
+// TODO: span info
 pub enum ResolveError {
     VarReadsItselfInInitializer(String),
+    VarRedeclaredInLocalScope(String),
 }
 
 impl fmt::Display for ResolveError {
@@ -15,9 +17,12 @@ impl fmt::Display for ResolveError {
         match self {
             ResolveError::VarReadsItselfInInitializer(ident) => write!(
                 f,
-                "Variable declaration {} refers to itself in its initializer",
+                "Variable declaration '{}' refers to itself in its initializer",
                 ident,
             ),
+            ResolveError::VarRedeclaredInLocalScope(ident) => {
+                write!(f, "Variable '{}' already declared in this scope", ident,)
+            }
         }
     }
 }
@@ -54,9 +59,20 @@ impl<'a> ResolveCtx<'a> {
         self.scopes.pop();
     }
 
-    fn declare(&mut self, ident: &str) {
+    fn declare(&mut self, ident: &str) -> ResolveResult {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(ident.to_string(), false);
+            match scope.entry(ident.to_string()) {
+                Entry::Occupied(_) => {
+                    Err(ResolveError::VarRedeclaredInLocalScope(ident.to_string()))
+                }
+                Entry::Vacant(vacant) => {
+                    vacant.insert(false);
+                    Ok(())
+                }
+            }
+        } else {
+            // Declaring (even redeclaring) variables in global scope is fine
+            Ok(())
         }
     }
 
@@ -103,7 +119,7 @@ fn resolve_stmt(ctx: &mut ResolveCtx, stmt: &parser::Stmt) -> ResolveResult {
 }
 
 fn resolve_var_decl_stmt(ctx: &mut ResolveCtx, var_decl: &parser::VarDeclStmt) -> ResolveResult {
-    ctx.declare(var_decl.ident());
+    ctx.declare(var_decl.ident())?;
     if let Some(initializer) = var_decl.initializer() {
         resolve_expr(ctx, initializer)?;
     }
@@ -113,12 +129,12 @@ fn resolve_var_decl_stmt(ctx: &mut ResolveCtx, var_decl: &parser::VarDeclStmt) -
 }
 
 fn resolve_fun_decl_stmt(ctx: &mut ResolveCtx, fun_decl: &parser::FunDeclStmt) -> ResolveResult {
-    ctx.declare(fun_decl.ident());
+    ctx.declare(fun_decl.ident())?;
     ctx.define(fun_decl.ident());
 
     ctx.push_scope();
     for param in fun_decl.params() {
-        ctx.declare(param);
+        ctx.declare(param)?;
         ctx.define(param);
     }
     resolve_stmts(ctx, fun_decl.body())?;

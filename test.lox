@@ -245,3 +245,8 @@ var a = "global";
 
     showA();
 }
+
+// fun bad() {
+//     var a = 1;
+//     var a = "a";
+// }
