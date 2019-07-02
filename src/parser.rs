@@ -49,8 +49,8 @@
 //! We express op precedence in production rules.
 //!
 //! ```text
-//! expression     → assignment ;
-//! assignment     → identifier "=" assignment
+//! expression     → assign ;
+//! assign         → identifier "=" assign
 //!                | logic_or ;
 //! logic_or       → logic_and ( "or" logic_and )* ;
 //! logic_and      → equality ( "and" equality )* ;
@@ -241,19 +241,11 @@ pub struct IfStmt {
 }
 
 impl IfStmt {
-    pub fn new(cond: Expr, then: Stmt) -> Self {
+    pub fn new(cond: Expr, then: Stmt, else_: Option<Stmt>) -> Self {
         Self {
             cond,
             then: Box::new(then),
-            else_: None,
-        }
-    }
-
-    pub fn with_else_branch(cond: Expr, then: Stmt, else_: Stmt) -> Self {
-        Self {
-            cond,
-            then: Box::new(then),
-            else_: Some(Box::new(else_)),
+            else_: else_.map(Box::new),
         }
     }
 
@@ -394,7 +386,7 @@ pub enum Expr {
     Binary(BinaryExpr),
     Logic(LogicExpr),
     Var(VarExpr),
-    Assignment(AssignmentExpr),
+    Assign(AssignExpr),
     Call(CallExpr),
 }
 
@@ -407,7 +399,7 @@ impl fmt::Display for Expr {
             Expr::Binary(binary) => write!(f, "{}", binary),
             Expr::Logic(logic) => write!(f, "{}", logic),
             Expr::Var(var) => write!(f, "{}", var),
-            Expr::Assignment(assignment) => write!(f, "{}", assignment),
+            Expr::Assign(assign) => write!(f, "{}", assign),
             Expr::Call(call) => write!(f, "{}", call),
         }
     }
@@ -556,12 +548,17 @@ impl fmt::Display for LogicExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VarExpr {
+    ast_id: u64,
     ident: String,
 }
 
 impl VarExpr {
-    pub fn new(ident: String) -> Self {
-        Self { ident }
+    pub fn new(ast_id: u64, ident: String) -> Self {
+        Self { ast_id, ident }
+    }
+
+    pub fn ast_id(&self) -> u64 {
+        self.ast_id
     }
 
     pub fn ident(&self) -> &str {
@@ -576,23 +573,27 @@ impl fmt::Display for VarExpr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AssignmentExpr {
-    // `target` is not called `ident`, because it doesn't need to be
-    // just an identifier, but any lvalue
-    target: VarExpr,
+pub struct AssignExpr {
+    ast_id: u64,
+    ident: String, // TODO: use a `Token` here for span info
     expr: Box<Expr>,
 }
 
-impl AssignmentExpr {
-    pub fn new(target: VarExpr, expr: Expr) -> Self {
+impl AssignExpr {
+    pub fn new(ast_id: u64, ident: String, expr: Expr) -> Self {
         Self {
-            target,
+            ast_id,
+            ident,
             expr: Box::new(expr),
         }
     }
 
-    pub fn target(&self) -> &VarExpr {
-        &self.target
+    pub fn ast_id(&self) -> u64 {
+        self.ast_id
+    }
+
+    pub fn ident(&self) -> &str {
+        &self.ident
     }
 
     pub fn expr(&self) -> &Expr {
@@ -600,9 +601,9 @@ impl AssignmentExpr {
     }
 }
 
-impl fmt::Display for AssignmentExpr {
+impl fmt::Display for AssignExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "(assignment {} {})", self.target, self.expr)
+        write!(f, "(assign {} {})", self.ident, self.expr)
     }
 }
 
@@ -781,7 +782,7 @@ pub enum ParseError {
     ExpectedClosingParenAfterForIncrement(Option<Token>),
     ExpectedClosingParenAfterCall(Option<Token>),
     ExpectedPrimaryExpr(Option<Token>),
-    InvalidAssignmentTarget(Expr),
+    InvalidAssignTarget(Expr),
     TooManyCallArgs(Expr),
     TooManyFunParams(String),
 }
@@ -970,7 +971,7 @@ impl fmt::Display for ParseError {
             ParseError::ExpectedPrimaryExpr(None) => {
                 write!(f, "Expected primary expression but found end of input")
             }
-            ParseError::InvalidAssignmentTarget(expr) => {
+            ParseError::InvalidAssignTarget(expr) => {
                 write!(f, "Expression {} is not a valid assignment target", expr)
             }
             ParseError::TooManyCallArgs(expr) => {
@@ -1017,14 +1018,23 @@ pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Program> {
 }
 
 struct ParseCtx<'a> {
+    next_id: u64,
     tokens: Peekable<slice::Iter<'a, Token>>,
 }
 
 impl<'a> ParseCtx<'a> {
     fn new(tokens: &'a [Token]) -> Self {
         Self {
+            next_id: 0,
             tokens: tokens.iter().peekable(),
         }
+    }
+
+    fn next_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        id
     }
 
     fn check_token(&mut self, token_value: &TokenValue) -> bool {
@@ -1207,9 +1217,9 @@ fn finish_parse_if_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
             let then = parse_stmt(ctx)?;
             if ctx.read_token_if(&TokenValue::Else).is_some() {
                 let else_ = parse_stmt(ctx)?;
-                Ok(Stmt::If(IfStmt::with_else_branch(cond, then, else_)))
+                Ok(Stmt::If(IfStmt::new(cond, then, Some(else_))))
             } else {
-                Ok(Stmt::If(IfStmt::new(cond, then)))
+                Ok(Stmt::If(IfStmt::new(cond, then, None)))
             }
         } else {
             let token = ctx.peek_token().cloned();
@@ -1370,24 +1380,28 @@ fn parse_expr_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
 }
 
 fn parse_expr(ctx: &mut ParseCtx) -> ParseResult<Expr> {
-    parse_assignment(ctx)
+    parse_assign(ctx)
 }
 
-fn parse_assignment(ctx: &mut ParseCtx) -> ParseResult<Expr> {
+fn parse_assign(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let expr = parse_logic_or(ctx)?;
     if ctx.read_token_if(&TokenValue::Equal).is_some() {
         // Instead of looping through operands like elsewhere, we
-        // recurse to `parse_assignment` to emulate
+        // recurse to `parse_assign` to emulate
         // right-associativity
-        let right = parse_assignment(ctx)?;
+        let right = parse_assign(ctx)?;
 
         if let Expr::Var(var) = expr {
-            Ok(Expr::Assignment(AssignmentExpr::new(var, right)))
+            Ok(Expr::Assign(AssignExpr::new(
+                ctx.next_id(),
+                var.ident().to_string(),
+                right,
+            )))
         } else {
-            Err(ParseError::InvalidAssignmentTarget(expr))
+            Err(ParseError::InvalidAssignTarget(expr))
         }
     } else {
-        // No assignment token, fall through to other rules
+        // No assign token, fall through to other rules
         Ok(expr)
     }
 }
@@ -1518,15 +1532,14 @@ fn parse_primary(ctx: &mut ParseCtx) -> ParseResult<Expr> {
             TokenValue::Number(number) => Ok(Expr::Lit(LitExpr::Number(*number))),
             TokenValue::String(string) => Ok(Expr::Lit(LitExpr::String(string.clone()))),
             // TODO: intern ident
-            TokenValue::Ident(ident) => Ok(Expr::Var(VarExpr::new(ident.clone()))),
+            TokenValue::Ident(ident) => Ok(Expr::Var(VarExpr::new(ctx.next_id(), ident.clone()))),
             TokenValue::LeftParen => {
                 let expr = parse_expr(ctx)?;
                 if ctx.read_token_if(&TokenValue::RightParen).is_some() {
                     Ok(Expr::Group(GroupExpr::new(expr)))
                 } else {
-                    Err(ParseError::ExpectedClosingParenAfterGroupExpr(
-                        ctx.peek_token().cloned(),
-                    ))
+                    let token = ctx.peek_token().cloned();
+                    Err(ParseError::ExpectedClosingParenAfterGroupExpr(token))
                 }
             }
             _ => Err(ParseError::ExpectedPrimaryExpr(Some(token))),

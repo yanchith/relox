@@ -1,15 +1,13 @@
 use std::cell::RefCell;
 use std::cmp::PartialEq;
+use std::collections::HashMap;
 use std::fmt;
 use std::mem;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::env::{AssignError, Env};
-use crate::parser::{
-    AssignmentExpr, BinaryExpr, BinaryOp, CallExpr, Expr, FunDeclStmt, GroupExpr, LitExpr,
-    LogicExpr, LogicOp, Program, Stmt, UnaryExpr, UnaryOp, VarExpr,
-};
+use crate::parser;
 use crate::reporter::Reporter;
 
 /// A Lox Value.
@@ -78,12 +76,12 @@ pub trait Callable: fmt::Debug {
 
 #[derive(Debug)]
 struct Function {
-    fun: FunDeclStmt,
+    fun: parser::FunDeclStmt,
     env: Rc<RefCell<Env>>,
 }
 
 impl Function {
-    pub fn new(fun: FunDeclStmt, env: Rc<RefCell<Env>>) -> Self {
+    pub fn new(fun: parser::FunDeclStmt, env: Rc<RefCell<Env>>) -> Self {
         Self { fun, env }
     }
 }
@@ -163,7 +161,7 @@ pub enum InterpretError {
     ValueNotCallable(Value),
     WrongNumberOfArgsToCallable(usize, usize), // TODO: add callable ident
     UndeclaredVariableUse,                     // TODO: add variable name
-    UndeclaredVariableAssignment(String),
+    UndeclaredVariableAssign(String),
 }
 
 impl fmt::Display for InterpretError {
@@ -180,8 +178,8 @@ impl fmt::Display for InterpretError {
                 provided, required,
             ),
             InterpretError::UndeclaredVariableUse => write!(f, "Use of undeclared variable"),
-            InterpretError::UndeclaredVariableAssignment(ident) => {
-                write!(f, "Assignment to undeclared variable {}", ident)
+            InterpretError::UndeclaredVariableAssign(ident) => {
+                write!(f, "Assign to undeclared variable {}", ident)
             }
         }
     }
@@ -191,22 +189,32 @@ pub type InterpretResult<T> = Result<T, InterpretError>;
 
 pub struct Interpreter {
     env: Rc<RefCell<Env>>,
+    globals: Rc<RefCell<Env>>,
+    locals: HashMap<u64, u32>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
-        let mut env = Env::new();
-        env.define(
+        let mut globals = Env::new();
+        globals.define(
             "clock".to_string(),
             Value::Callable(CallableValue::new(Box::new(NativeCallableClock))),
         );
 
+        let globals_ptr = Rc::new(RefCell::new(globals));
+
         Self {
-            env: Rc::new(RefCell::new(env)),
+            env: Rc::clone(&globals_ptr),
+            globals: globals_ptr,
+            locals: HashMap::new(),
         }
     }
 
-    pub fn interpret(&mut self, reporter: &mut Reporter, program: &Program) {
+    pub fn resolve(&mut self, ast_id: u64, distance: u32) {
+        self.locals.insert(ast_id, distance);
+    }
+
+    pub fn interpret(&mut self, reporter: &mut Reporter, program: &parser::Program) {
         for stmt in program.stmts() {
             match self.eval_stmt(stmt) {
                 Ok(Value::Nil) => (),
@@ -223,7 +231,7 @@ impl Interpreter {
         }
     }
 
-    fn interpret_stmts(&mut self, stmts: &[Stmt]) -> InterpretResult<()> {
+    fn interpret_stmts(&mut self, stmts: &[parser::Stmt]) -> InterpretResult<()> {
         for stmt in stmts {
             self.eval_stmt(stmt)?;
         }
@@ -239,9 +247,9 @@ impl Interpreter {
         self.env = new_env;
     }
 
-    fn eval_stmt(&mut self, stmt: &Stmt) -> InterpretResult<Value> {
+    fn eval_stmt(&mut self, stmt: &parser::Stmt) -> InterpretResult<Value> {
         match stmt {
-            Stmt::VarDecl(var_decl) => {
+            parser::Stmt::VarDecl(var_decl) => {
                 let value = match var_decl.initializer() {
                     Some(expr) => self.eval_expr(expr)?,
                     None => Value::Nil,
@@ -253,7 +261,7 @@ impl Interpreter {
 
                 Ok(Value::Nil)
             }
-            Stmt::FunDecl(fun_decl) => {
+            parser::Stmt::FunDecl(fun_decl) => {
                 let function = Function::new(fun_decl.clone(), Rc::clone(&self.env));
                 let fun = Value::Callable(CallableValue::new(Box::new(function)));
 
@@ -263,8 +271,8 @@ impl Interpreter {
 
                 Ok(Value::Nil)
             }
-            Stmt::Expr(expr) => self.eval_expr(expr.expr()),
-            Stmt::If(if_) => {
+            parser::Stmt::Expr(expr) => self.eval_expr(expr.expr()),
+            parser::Stmt::If(if_) => {
                 let cond = self.eval_expr(if_.cond())?;
                 if is_truthy(&cond) {
                     self.eval_stmt(if_.then())?;
@@ -274,27 +282,27 @@ impl Interpreter {
 
                 Ok(Value::Nil)
             }
-            Stmt::While(while_) => {
+            parser::Stmt::While(while_) => {
                 while is_truthy(&self.eval_expr(while_.cond())?) {
                     self.eval_stmt(while_.loop_())?;
                 }
 
                 Ok(Value::Nil)
             }
-            Stmt::Print(print) => {
+            parser::Stmt::Print(print) => {
                 let value = self.eval_expr(print.expr())?;
                 println!("{}", value);
 
                 Ok(Value::Nil)
             }
-            Stmt::Return(return_) => {
+            parser::Stmt::Return(return_) => {
                 let value = match return_.expr() {
                     Some(expr) => self.eval_expr(expr)?,
                     None => Value::Nil,
                 };
                 Err(InterpretError::Return(value))
             }
-            Stmt::Block(block) => {
+            parser::Stmt::Block(block) => {
                 let new_env = Env::with_parent(Rc::clone(&self.env));
                 let old_env = mem::replace(&mut self.env, Rc::new(RefCell::new(new_env)));
 
@@ -307,22 +315,22 @@ impl Interpreter {
         }
     }
 
-    fn eval_expr(&mut self, expr: &Expr) -> InterpretResult<Value> {
+    fn eval_expr(&mut self, expr: &parser::Expr) -> InterpretResult<Value> {
         match expr {
-            Expr::Lit(lit) => self.eval_lit(lit),
-            Expr::Group(group) => self.eval_group(group),
-            Expr::Unary(unary) => self.eval_unary(unary),
-            Expr::Binary(binary) => self.eval_binary(binary),
-            Expr::Logic(logic) => self.eval_logic(logic),
-            Expr::Var(var) => self.eval_var(var),
-            Expr::Assignment(assignment) => self.eval_assignment(assignment),
-            Expr::Call(call) => self.eval_call(call),
+            parser::Expr::Lit(lit) => self.eval_lit(lit),
+            parser::Expr::Group(group) => self.eval_group(group),
+            parser::Expr::Unary(unary) => self.eval_unary(unary),
+            parser::Expr::Binary(binary) => self.eval_binary(binary),
+            parser::Expr::Logic(logic) => self.eval_logic(logic),
+            parser::Expr::Var(var) => self.eval_var(var),
+            parser::Expr::Assign(assign) => self.eval_assign(assign),
+            parser::Expr::Call(call) => self.eval_call(call),
         }
     }
 
-    fn eval_lit(&self, lit: &LitExpr) -> InterpretResult<Value> {
+    fn eval_lit(&self, lit: &parser::LitExpr) -> InterpretResult<Value> {
         let value = match lit {
-            LitExpr::Number(number) => Value::Number(*number),
+            parser::LitExpr::Number(number) => Value::Number(*number),
             // We clone the string from the AST, as we may be
             // instantiating it multiple times and we don't want the
             // instances to share storage (even though we currently
@@ -331,35 +339,35 @@ impl Interpreter {
             // strings, we can put the string in the token/ast in an
             // Rc as well, otherwise we can maybe clone on write (Cow)
             // instead?
-            LitExpr::String(string) => Value::String(Rc::new(string.clone())),
-            LitExpr::Boolean(boolean) => Value::Boolean(*boolean),
-            LitExpr::Nil => Value::Nil,
+            parser::LitExpr::String(string) => Value::String(Rc::new(string.clone())),
+            parser::LitExpr::Boolean(boolean) => Value::Boolean(*boolean),
+            parser::LitExpr::Nil => Value::Nil,
         };
 
         Ok(value)
     }
 
-    fn eval_group(&mut self, group: &GroupExpr) -> InterpretResult<Value> {
+    fn eval_group(&mut self, group: &parser::GroupExpr) -> InterpretResult<Value> {
         self.eval_expr(group.expr())
     }
 
-    fn eval_unary(&mut self, unary: &UnaryExpr) -> InterpretResult<Value> {
+    fn eval_unary(&mut self, unary: &parser::UnaryExpr) -> InterpretResult<Value> {
         let value = self.eval_expr(unary.expr())?;
         match unary.op() {
-            UnaryOp::Minus => match &value {
+            parser::UnaryOp::Minus => match &value {
                 Value::Number(number) => Ok(Value::Number(-number)),
                 _ => Err(InterpretError::TypeError),
             },
-            UnaryOp::Not => Ok(Value::Boolean(!is_truthy(&value))),
+            parser::UnaryOp::Not => Ok(Value::Boolean(!is_truthy(&value))),
         }
     }
 
-    fn eval_binary(&mut self, binary: &BinaryExpr) -> InterpretResult<Value> {
+    fn eval_binary(&mut self, binary: &parser::BinaryExpr) -> InterpretResult<Value> {
         let left_value = self.eval_expr(binary.left())?;
         let right_value = self.eval_expr(binary.right())?;
 
         match binary.op() {
-            BinaryOp::Plus => match (left_value, right_value) {
+            parser::BinaryOp::Plus => match (left_value, right_value) {
                 (Value::String(left), Value::String(right)) => {
                     let mut result: String = String::with_capacity(left.len() + right.len());
                     result.push_str(&left);
@@ -369,54 +377,54 @@ impl Interpreter {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Number(left + right)),
                 _ => Err(InterpretError::TypeError),
             },
-            BinaryOp::Minus => match (left_value, right_value) {
+            parser::BinaryOp::Minus => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Number(left - right)),
                 _ => Err(InterpretError::TypeError),
             },
-            BinaryOp::Multiply => match (left_value, right_value) {
+            parser::BinaryOp::Multiply => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Number(left * right)),
                 _ => Err(InterpretError::TypeError),
             },
-            BinaryOp::Divide => match (left_value, right_value) {
+            parser::BinaryOp::Divide => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Number(left / right)),
                 _ => Err(InterpretError::TypeError),
             },
-            BinaryOp::Greater => match (left_value, right_value) {
+            parser::BinaryOp::Greater => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Boolean(left > right)),
                 _ => Err(InterpretError::TypeError),
             },
-            BinaryOp::GreaterEqual => match (left_value, right_value) {
+            parser::BinaryOp::GreaterEqual => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Boolean(left >= right)),
                 _ => Err(InterpretError::TypeError),
             },
-            BinaryOp::Less => match (left_value, right_value) {
+            parser::BinaryOp::Less => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Boolean(left < right)),
                 _ => Err(InterpretError::TypeError),
             },
-            BinaryOp::LessEqual => match (left_value, right_value) {
+            parser::BinaryOp::LessEqual => match (left_value, right_value) {
                 (Value::Number(left), Value::Number(right)) => Ok(Value::Boolean(left <= right)),
                 _ => Err(InterpretError::TypeError),
             },
             // Note: officially in Lox, NaN == NaN, but our
             // implementation uses Rust and IEEE 754 semantics, where
             // NaN != NaN
-            BinaryOp::Equal => Ok(Value::Boolean(left_value == right_value)),
-            BinaryOp::NotEqual => Ok(Value::Boolean(left_value != right_value)),
+            parser::BinaryOp::Equal => Ok(Value::Boolean(left_value == right_value)),
+            parser::BinaryOp::NotEqual => Ok(Value::Boolean(left_value != right_value)),
         }
     }
 
-    fn eval_logic(&mut self, logic: &LogicExpr) -> InterpretResult<Value> {
+    fn eval_logic(&mut self, logic: &parser::LogicExpr) -> InterpretResult<Value> {
         let left_value = self.eval_expr(logic.left())?;
 
         match logic.op() {
-            LogicOp::And => {
+            parser::LogicOp::And => {
                 if is_truthy(&left_value) {
                     Ok(self.eval_expr(logic.right())?)
                 } else {
                     Ok(left_value)
                 }
             }
-            LogicOp::Or => {
+            parser::LogicOp::Or => {
                 if is_truthy(&left_value) {
                     Ok(left_value)
                 } else {
@@ -426,29 +434,38 @@ impl Interpreter {
         }
     }
 
-    fn eval_var(&self, var: &VarExpr) -> InterpretResult<Value> {
-        self.env
-            .borrow()
-            .get(var.ident())
-            .ok_or(InterpretError::UndeclaredVariableUse)
+    fn eval_var(&self, var: &parser::VarExpr) -> InterpretResult<Value> {
+        if let Some(distance) = self.locals.get(&var.ast_id()) {
+            Ok(self.env.borrow().get_at_distance(var.ident(), *distance))
+        } else {
+            self.globals
+                .borrow()
+                .get(var.ident())
+                .ok_or(InterpretError::UndeclaredVariableUse)
+        }
     }
 
-    fn eval_assignment(&mut self, assignment: &AssignmentExpr) -> InterpretResult<Value> {
-        let lvalue = assignment.target();
-        let rvalue = self.eval_expr(assignment.expr())?;
+    fn eval_assign(&mut self, assign: &parser::AssignExpr) -> InterpretResult<Value> {
+        let lvalue = assign.ident();
+        let rvalue = self.eval_expr(assign.expr())?;
 
-        let mut env = self.env.borrow_mut();
-
-        match env.assign(lvalue.ident(), rvalue.clone()) {
-            Ok(()) => Ok(rvalue),
-            Err(AssignError::ValueNotDeclared) => {
-                let ident = lvalue.ident().to_string();
-                Err(InterpretError::UndeclaredVariableAssignment(ident))
+        if let Some(distance) = self.locals.get(&assign.ast_id()) {
+            self.env
+                .borrow_mut()
+                .assign_at_distance(lvalue, *distance, rvalue.clone());
+            Ok(rvalue)
+        } else {
+            match self.globals.borrow_mut().assign(lvalue, rvalue.clone()) {
+                Ok(()) => Ok(rvalue),
+                Err(AssignError::ValueNotDeclared) => {
+                    let ident = lvalue.to_string();
+                    Err(InterpretError::UndeclaredVariableAssign(ident))
+                }
             }
         }
     }
 
-    fn eval_call(&mut self, call: &CallExpr) -> InterpretResult<Value> {
+    fn eval_call(&mut self, call: &parser::CallExpr) -> InterpretResult<Value> {
         let callee = self.eval_expr(call.callee())?;
 
         if let Value::Callable(callable_value) = callee {

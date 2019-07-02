@@ -36,14 +36,30 @@ impl Env {
     }
 
     pub fn assign(&mut self, ident: &str, new_value: Value) -> Result<(), AssignError> {
-        if let Some(value) = self.values.get_mut(ident) {
-            *value = new_value;
+        if let Some(value_ptr) = self.values.get_mut(ident) {
+            *value_ptr = new_value;
             Ok(())
         } else if let Some(parent) = &self.parent {
             let mut parent = parent.borrow_mut();
             parent.assign(ident, new_value)
         } else {
             Err(AssignError::ValueNotDeclared)
+        }
+    }
+
+    pub fn assign_at_distance(&mut self, ident: &str, distance: u32, new_value: Value) {
+        if distance == 0 {
+            let value_ptr = self
+                .values
+                .get_mut(ident)
+                .expect("`assign_at_distance()` must always find the value slot");
+            *value_ptr = new_value;
+        } else {
+            self.parent
+                .as_mut()
+                .expect("`assign_at_distance()` must always find a parent env")
+                .borrow_mut()
+                .assign_at_distance(ident, distance - 1, new_value)
         }
     }
 
@@ -55,5 +71,20 @@ impl Env {
                 None
             }
         })
+    }
+
+    pub fn get_at_distance(&self, ident: &str, distance: u32) -> Value {
+        if distance == 0 {
+            self.values
+                .get(ident)
+                .cloned()
+                .expect("`get_at_distance()` must always find the value slot")
+        } else {
+            self.parent
+                .as_ref()
+                .expect("`get_at_distance()` must always find a parent env")
+                .borrow()
+                .get_at_distance(ident, distance - 1)
+        }
     }
 }

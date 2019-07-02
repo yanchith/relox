@@ -220,3 +220,28 @@ fun makePoint(x, y) {
 var point = makePoint(2, 3);
 print point("x"); // "2".
 print point("y"); // "3".
+
+fun scope(a) {
+    print a;
+    var a = "inner";
+    print a;
+}
+scope("param");
+
+// Nasty closure leak
+
+var a = "global";
+{
+    fun showA() {
+        print a;
+    }
+
+    showA();
+
+    var a = "block";
+
+    // This prints "block" if the leak is not fixed, but should always
+    // print "global"
+
+    showA();
+}

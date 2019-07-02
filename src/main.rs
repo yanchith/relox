@@ -8,6 +8,7 @@ mod interpreter;
 mod lexer;
 mod parser;
 mod reporter;
+mod resolver;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -68,8 +69,21 @@ fn run_prompt() {
 
 fn run(interpreter: &mut Interpreter, reporter: &mut Reporter, script: &str) {
     let tokens = lexer::scan(reporter, script);
+    if reporter.has_compile_error() {
+        return;
+    }
+
     if let Some(program) = parser::parse(reporter, &tokens) {
+        if reporter.has_compile_error() {
+            return;
+        }
         println!("{}", program);
+
+        resolver::resolve(reporter, interpreter, program.stmts());
+        if reporter.has_compile_error() {
+            return;
+        }
+
         interpreter.interpret(reporter, &program);
     }
 }
