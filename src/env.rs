@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::interpreter::Value;
+use crate::value::Value;
 
 // FIXME(yanchith): std::fmt and error::Error
 pub enum AssignError {

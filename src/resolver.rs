@@ -2,8 +2,8 @@ use std::collections::hash_map::{Entry, HashMap};
 use std::convert::TryFrom;
 use std::fmt;
 
+use crate::ast;
 use crate::interpreter::Interpreter;
-use crate::parser;
 use crate::reporter::Reporter;
 
 // FIXME(yanchith): impl error::Error;
@@ -34,7 +34,7 @@ impl fmt::Display for ResolveError {
 
 pub type ResolveResult = Result<(), ResolveError>;
 
-pub fn resolve(reporter: &mut Reporter, interpreter: &mut Interpreter, stmts: &[parser::Stmt]) {
+pub fn resolve(reporter: &mut Reporter, interpreter: &mut Interpreter, stmts: &[ast::Stmt]) {
     let mut ctx = ResolveCtx::new(interpreter);
     let res = resolve_stmts(&mut ctx, stmts);
 
@@ -120,7 +120,7 @@ impl<'a> ResolveCtx<'a> {
     }
 }
 
-fn resolve_stmts(ctx: &mut ResolveCtx, stmts: &[parser::Stmt]) -> ResolveResult {
+fn resolve_stmts(ctx: &mut ResolveCtx, stmts: &[ast::Stmt]) -> ResolveResult {
     for stmt in stmts {
         resolve_stmt(ctx, stmt)?;
     }
@@ -128,20 +128,20 @@ fn resolve_stmts(ctx: &mut ResolveCtx, stmts: &[parser::Stmt]) -> ResolveResult 
     Ok(())
 }
 
-fn resolve_stmt(ctx: &mut ResolveCtx, stmt: &parser::Stmt) -> ResolveResult {
+fn resolve_stmt(ctx: &mut ResolveCtx, stmt: &ast::Stmt) -> ResolveResult {
     match stmt {
-        parser::Stmt::VarDecl(var_decl) => resolve_var_decl_stmt(ctx, var_decl),
-        parser::Stmt::FunDecl(fun_decl) => resolve_fun_decl_stmt(ctx, fun_decl),
-        parser::Stmt::Expr(expr) => resolve_expr_stmt(ctx, expr),
-        parser::Stmt::If(if_) => resolve_if_stmt(ctx, if_),
-        parser::Stmt::While(while_) => resolve_while_stmt(ctx, while_),
-        parser::Stmt::Print(print) => resolve_print_stmt(ctx, print),
-        parser::Stmt::Return(return_) => resolve_return_stmt(ctx, return_),
-        parser::Stmt::Block(block) => resolve_block_stmt(ctx, block),
+        ast::Stmt::VarDecl(var_decl) => resolve_var_decl_stmt(ctx, var_decl),
+        ast::Stmt::FunDecl(fun_decl) => resolve_fun_decl_stmt(ctx, fun_decl),
+        ast::Stmt::Expr(expr) => resolve_expr_stmt(ctx, expr),
+        ast::Stmt::If(if_) => resolve_if_stmt(ctx, if_),
+        ast::Stmt::While(while_) => resolve_while_stmt(ctx, while_),
+        ast::Stmt::Print(print) => resolve_print_stmt(ctx, print),
+        ast::Stmt::Return(return_) => resolve_return_stmt(ctx, return_),
+        ast::Stmt::Block(block) => resolve_block_stmt(ctx, block),
     }
 }
 
-fn resolve_var_decl_stmt(ctx: &mut ResolveCtx, var_decl: &parser::VarDeclStmt) -> ResolveResult {
+fn resolve_var_decl_stmt(ctx: &mut ResolveCtx, var_decl: &ast::VarDeclStmt) -> ResolveResult {
     // We first declare the variable, then resolve the initializer,
     // and only afterwards mark the variable as defined. This is
     // because the initializer expression lives in the same scope as
@@ -158,7 +158,7 @@ fn resolve_var_decl_stmt(ctx: &mut ResolveCtx, var_decl: &parser::VarDeclStmt) -
     Ok(())
 }
 
-fn resolve_fun_decl_stmt(ctx: &mut ResolveCtx, fun_decl: &parser::FunDeclStmt) -> ResolveResult {
+fn resolve_fun_decl_stmt(ctx: &mut ResolveCtx, fun_decl: &ast::FunDeclStmt) -> ResolveResult {
     ctx.declare(fun_decl.ident())?;
     ctx.define(fun_decl.ident());
 
@@ -176,11 +176,11 @@ fn resolve_fun_decl_stmt(ctx: &mut ResolveCtx, fun_decl: &parser::FunDeclStmt) -
     Ok(())
 }
 
-fn resolve_expr_stmt(ctx: &mut ResolveCtx, expr: &parser::ExprStmt) -> ResolveResult {
+fn resolve_expr_stmt(ctx: &mut ResolveCtx, expr: &ast::ExprStmt) -> ResolveResult {
     resolve_expr(ctx, expr.expr())
 }
 
-fn resolve_if_stmt(ctx: &mut ResolveCtx, if_: &parser::IfStmt) -> ResolveResult {
+fn resolve_if_stmt(ctx: &mut ResolveCtx, if_: &ast::IfStmt) -> ResolveResult {
     resolve_expr(ctx, if_.cond())?;
     resolve_stmt(ctx, if_.then())?;
     if let Some(else_) = if_.else_() {
@@ -190,18 +190,18 @@ fn resolve_if_stmt(ctx: &mut ResolveCtx, if_: &parser::IfStmt) -> ResolveResult 
     Ok(())
 }
 
-fn resolve_while_stmt(ctx: &mut ResolveCtx, while_: &parser::WhileStmt) -> ResolveResult {
+fn resolve_while_stmt(ctx: &mut ResolveCtx, while_: &ast::WhileStmt) -> ResolveResult {
     resolve_expr(ctx, while_.cond())?;
     resolve_stmt(ctx, while_.loop_())?;
 
     Ok(())
 }
 
-fn resolve_print_stmt(ctx: &mut ResolveCtx, print: &parser::PrintStmt) -> ResolveResult {
+fn resolve_print_stmt(ctx: &mut ResolveCtx, print: &ast::PrintStmt) -> ResolveResult {
     resolve_expr(ctx, print.expr())
 }
 
-fn resolve_return_stmt(ctx: &mut ResolveCtx, return_: &parser::ReturnStmt) -> ResolveResult {
+fn resolve_return_stmt(ctx: &mut ResolveCtx, return_: &ast::ReturnStmt) -> ResolveResult {
     if let FunctionTy::None = ctx.current_function() {
         Err(ResolveError::TopLevelReturnStatement)
     } else if let Some(expr) = return_.expr() {
@@ -211,7 +211,7 @@ fn resolve_return_stmt(ctx: &mut ResolveCtx, return_: &parser::ReturnStmt) -> Re
     }
 }
 
-fn resolve_block_stmt(ctx: &mut ResolveCtx, block: &parser::BlockStmt) -> ResolveResult {
+fn resolve_block_stmt(ctx: &mut ResolveCtx, block: &ast::BlockStmt) -> ResolveResult {
     ctx.push_scope();
     resolve_stmts(ctx, block.stmts())?;
     ctx.pop_scope();
@@ -219,46 +219,46 @@ fn resolve_block_stmt(ctx: &mut ResolveCtx, block: &parser::BlockStmt) -> Resolv
     Ok(())
 }
 
-fn resolve_expr(ctx: &mut ResolveCtx, expr: &parser::Expr) -> ResolveResult {
+fn resolve_expr(ctx: &mut ResolveCtx, expr: &ast::Expr) -> ResolveResult {
     match expr {
-        parser::Expr::Lit(lit) => resolve_lit_expr(ctx, lit),
-        parser::Expr::Group(group) => resolve_group_expr(ctx, group),
-        parser::Expr::Unary(unary) => resolve_unary_expr(ctx, unary),
-        parser::Expr::Binary(binary) => resolve_binary_expr(ctx, binary),
-        parser::Expr::Logic(logic) => resolve_logic_expr(ctx, logic),
-        parser::Expr::Var(var) => resolve_var_expr(ctx, var),
-        parser::Expr::Assign(assign) => resolve_assign_expr(ctx, assign),
-        parser::Expr::Call(call) => resolve_call_expr(ctx, call),
+        ast::Expr::Lit(lit) => resolve_lit_expr(ctx, lit),
+        ast::Expr::Group(group) => resolve_group_expr(ctx, group),
+        ast::Expr::Unary(unary) => resolve_unary_expr(ctx, unary),
+        ast::Expr::Binary(binary) => resolve_binary_expr(ctx, binary),
+        ast::Expr::Logic(logic) => resolve_logic_expr(ctx, logic),
+        ast::Expr::Var(var) => resolve_var_expr(ctx, var),
+        ast::Expr::Assign(assign) => resolve_assign_expr(ctx, assign),
+        ast::Expr::Call(call) => resolve_call_expr(ctx, call),
     }
 }
 
-fn resolve_lit_expr(_: &mut ResolveCtx, _: &parser::LitExpr) -> ResolveResult {
+fn resolve_lit_expr(_: &mut ResolveCtx, _: &ast::LitExpr) -> ResolveResult {
     Ok(())
 }
 
-fn resolve_group_expr(ctx: &mut ResolveCtx, group: &parser::GroupExpr) -> ResolveResult {
+fn resolve_group_expr(ctx: &mut ResolveCtx, group: &ast::GroupExpr) -> ResolveResult {
     resolve_expr(ctx, group.expr())
 }
 
-fn resolve_unary_expr(ctx: &mut ResolveCtx, unary: &parser::UnaryExpr) -> ResolveResult {
+fn resolve_unary_expr(ctx: &mut ResolveCtx, unary: &ast::UnaryExpr) -> ResolveResult {
     resolve_expr(ctx, unary.expr())
 }
 
-fn resolve_binary_expr(ctx: &mut ResolveCtx, binary: &parser::BinaryExpr) -> ResolveResult {
+fn resolve_binary_expr(ctx: &mut ResolveCtx, binary: &ast::BinaryExpr) -> ResolveResult {
     resolve_expr(ctx, binary.left())?;
     resolve_expr(ctx, binary.right())?;
 
     Ok(())
 }
 
-fn resolve_logic_expr(ctx: &mut ResolveCtx, logic: &parser::LogicExpr) -> ResolveResult {
+fn resolve_logic_expr(ctx: &mut ResolveCtx, logic: &ast::LogicExpr) -> ResolveResult {
     resolve_expr(ctx, logic.left())?;
     resolve_expr(ctx, logic.right())?;
 
     Ok(())
 }
 
-fn resolve_var_expr(ctx: &mut ResolveCtx, var: &parser::VarExpr) -> ResolveResult {
+fn resolve_var_expr(ctx: &mut ResolveCtx, var: &ast::VarExpr) -> ResolveResult {
     if let Some(scope) = ctx.scopes.last_mut() {
         if let Some(false) = scope.get(var.ident()) {
             let ident = var.ident().to_string();
@@ -271,7 +271,7 @@ fn resolve_var_expr(ctx: &mut ResolveCtx, var: &parser::VarExpr) -> ResolveResul
     Ok(())
 }
 
-fn resolve_assign_expr(ctx: &mut ResolveCtx, assign: &parser::AssignExpr) -> ResolveResult {
+fn resolve_assign_expr(ctx: &mut ResolveCtx, assign: &ast::AssignExpr) -> ResolveResult {
     resolve_expr(ctx, assign.expr())?;
 
     ctx.write_resolution(assign.ast_id(), assign.ident());
@@ -279,7 +279,7 @@ fn resolve_assign_expr(ctx: &mut ResolveCtx, assign: &parser::AssignExpr) -> Res
     Ok(())
 }
 
-fn resolve_call_expr(ctx: &mut ResolveCtx, call: &parser::CallExpr) -> ResolveResult {
+fn resolve_call_expr(ctx: &mut ResolveCtx, call: &ast::CallExpr) -> ResolveResult {
     resolve_expr(ctx, call.callee())?;
     for arg in call.args() {
         resolve_expr(ctx, arg)?;

@@ -3,12 +3,16 @@ use std::io::{self, Write};
 use crate::interpreter::Interpreter;
 use crate::reporter::Reporter;
 
+mod ast;
+mod callable;
 mod env;
 mod interpreter;
 mod lexer;
 mod parser;
 mod reporter;
 mod resolver;
+mod token;
+mod value;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -68,7 +72,7 @@ fn run_prompt() {
 }
 
 fn run(interpreter: &mut Interpreter, reporter: &mut Reporter, script: &str) {
-    let tokens = lexer::scan(reporter, script);
+    let tokens = lexer::lex(reporter, script);
     if reporter.has_compile_error() {
         return;
     }
