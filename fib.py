@@ -11,5 +11,5 @@ start = time()
 f = fib(30)
 end = time()
 
-print("computed fib(30) in", end - start, seconds)
+print("computed fib(30) =", f, "in", end - start, "seconds")
 

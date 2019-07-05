@@ -13,4 +13,5 @@ var f = fib(30);
 var end = clock();
 
 print "Computed fib(30) in (seconds)";
+print f;
 print end - start;
