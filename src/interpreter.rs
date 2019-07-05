@@ -299,7 +299,7 @@ impl Interpreter {
         } else {
             self.globals
                 .borrow()
-                .get(var.ident())
+                .get_here(var.ident())
                 .ok_or(InterpretError::UndeclaredVariableUse)
         }
     }
@@ -314,7 +314,7 @@ impl Interpreter {
                 .assign_at_distance(lvalue, *distance, rvalue.clone());
             Ok(rvalue)
         } else {
-            match self.globals.borrow_mut().assign(lvalue, rvalue.clone()) {
+            match self.globals.borrow_mut().assign_here(lvalue, rvalue.clone()) {
                 Ok(()) => Ok(rvalue),
                 Err(AssignError::ValueNotDeclared) => {
                     let ident = lvalue.to_string();

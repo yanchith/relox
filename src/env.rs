@@ -35,13 +35,10 @@ impl Env {
         self.values.insert(ident, value);
     }
 
-    pub fn assign(&mut self, ident: &str, new_value: Value) -> Result<(), AssignError> {
+    pub fn assign_here(&mut self, ident: &str, new_value: Value) -> Result<(), AssignError> {
         if let Some(value_ptr) = self.values.get_mut(ident) {
             *value_ptr = new_value;
             Ok(())
-        } else if let Some(parent) = &self.parent {
-            let mut parent = parent.borrow_mut();
-            parent.assign(ident, new_value)
         } else {
             Err(AssignError::ValueNotDeclared)
         }
@@ -63,14 +60,8 @@ impl Env {
         }
     }
 
-    pub fn get(&self, ident: &str) -> Option<Value> {
-        self.values.get(ident).cloned().or_else(|| {
-            if let Some(parent) = &self.parent {
-                parent.borrow().get(ident)
-            } else {
-                None
-            }
-        })
+    pub fn get_here(&self, ident: &str) -> Option<Value> {
+        self.values.get(ident).cloned()
     }
 
     pub fn get_at_distance(&self, ident: &str, distance: u64) -> Value {
