@@ -6,8 +6,8 @@ use crate::interpreter::Interpreter;
 use crate::parser;
 use crate::reporter::Reporter;
 
-// TODO: impl error::Error;
-// TODO: span info
+// FIXME(yanchith): impl error::Error;
+// FIXME(yanchith): span info
 pub enum ResolveError {
     VarReadsItselfInInitializer(String),
     VarRedeclaredInLocalScope(String),

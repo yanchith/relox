@@ -156,7 +156,7 @@ impl fmt::Display for TokenValue {
     }
 }
 
-// TODO: return a result and add a error type
+// FIXME(yanchith): return a result and add a error type
 
 pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
     let mut ctx = LexerCtx::new(source);
@@ -236,7 +236,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                 if let Some((string, string_span)) = ctx.read_string_finish() {
                     Some(Token::new(TokenValue::String(string), string_span))
                 } else {
-                    // TODO: get span of unterminated string and report that!
+                    // FIXME(yanchith): get span of unterminated string and report that!
                     reporter.report_compile_error(format!(
                         "Unterminated string starting on line: {}",
                         span.line,
@@ -253,7 +253,7 @@ pub fn scan(reporter: &mut Reporter, source: &str) -> Vec<Token> {
                 if let Some((number, number_span)) = ctx.read_number_finish(digit) {
                     Some(Token::new(TokenValue::Number(number), number_span))
                 } else {
-                    // TODO: get span of number we were trying to parse and report that!
+                    // FIXME(yanchith): get span of number we were trying to parse and report that!
                     reporter.report_compile_error(format!("Invalid number on line: {}", span.line));
                     break;
                 }
@@ -317,7 +317,7 @@ impl<'a> LexerCtx<'a> {
     pub fn read_string_finish(&mut self) -> Option<(String, Span)> {
         let line_start = self.curr_line; // Strings can be multiline, need to track where it started
 
-        // TODO: track this properly... The string could have started
+        // FIXME(yanchith): track this properly... The string could have started
         // as the last character of the previous
         // line. `saturating_sub()` is used to prevent underflow if it
         // did.

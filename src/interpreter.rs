@@ -151,16 +151,15 @@ impl fmt::Display for Value {
     }
 }
 
-// TODO: add Token/Span info
-// TODO: implement std::error:Error
-// TODO: implement std::fmt::Display
+// FIXME(yanchith): add Token/Span info
+// FIXME(yanchith): implement std::error:Error
 #[derive(Debug)]
 pub enum InterpretError {
     Return(Value),
     TypeError,
     ValueNotCallable(Value),
-    WrongNumberOfArgsToCallable(usize, usize), // TODO: add callable ident
-    UndeclaredVariableUse,                     // TODO: add variable name
+    WrongNumberOfArgsToCallable(usize, usize), // FIXME(yanchith): add callable ident
+    UndeclaredVariableUse,                     // FIXME(yanchith): add variable name
     UndeclaredVariableAssign(String),
 }
 
@@ -336,7 +335,7 @@ impl Interpreter {
             // instantiating it multiple times and we don't want the
             // instances to share storage (even though we currently
             // don't support mutation on strings).
-            // TODO: optimize this... if we decide never to mutate
+            // FIXME(yanchith): optimize this... if we decide never to mutate
             // strings, we can put the string in the token/ast in an
             // Rc as well, otherwise we can maybe clone on write (Cow)
             // instead?

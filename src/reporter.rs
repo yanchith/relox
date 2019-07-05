@@ -3,7 +3,7 @@ pub struct Reporter {
     runtime_error: Option<String>,
 }
 
-// TODO: span reporting
+// FIXME(yanchith): span reporting
 
 impl Reporter {
     pub fn new() -> Self {
@@ -21,7 +21,7 @@ impl Reporter {
         self.runtime_error.is_some()
     }
 
-    // TODO: just be able to get the reports, don't print them in here
+    // FIXME(yanchith): just be able to get the reports, don't print them in here
     pub fn print_all_errors(&mut self) {
         for message in &self.compile_errors {
             eprintln!("Compile Error: {}", message);

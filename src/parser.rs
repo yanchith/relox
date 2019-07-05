@@ -135,7 +135,7 @@ impl fmt::Display for Stmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VarDeclStmt {
-    ident: String, // TODO: intern idents
+    ident: String, // FIXME(yanchith): intern idents
     initializer: Option<Expr>,
 }
 
@@ -164,7 +164,7 @@ impl fmt::Display for VarDeclStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunDeclStmt {
-    ident: String, // TODO: indern idents
+    ident: String, // FIXME(yanchith): indern idents
     params: Vec<String>,
     body: Vec<Stmt>,
 }
@@ -182,7 +182,7 @@ impl FunDeclStmt {
         &self.ident
     }
 
-    // TODO: try using &[&str] as return type
+    // FIXME(yanchith): try using &[&str] as return type
     pub fn params(&self) -> &[String] {
         &self.params
     }
@@ -575,7 +575,7 @@ impl fmt::Display for VarExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignExpr {
     ast_id: u64,
-    ident: String, // TODO: use a `Token` here for span info
+    ident: String, // FIXME(yanchith): use a `Token` here for span info
     expr: Box<Expr>,
 }
 
@@ -651,7 +651,7 @@ pub enum UnaryOp {
     Minus,
 }
 
-// TODO: token in error
+// FIXME(yanchith): token in error
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnaryOpFromTokenError;
 
@@ -694,7 +694,7 @@ pub enum BinaryOp {
     Divide,
 }
 
-// TODO: token in error
+// FIXME(yanchith): token in error
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BinaryOpFromTokenError;
 
@@ -758,7 +758,7 @@ impl fmt::Display for LogicOp {
     }
 }
 
-// TODO: implement std::error:Error
+// FIXME(yanchith): implement std::error:Error
 #[derive(Debug)]
 pub enum ParseError {
     ExpectedSemicolonAfterExprStmt(Option<Token>),
@@ -1157,7 +1157,7 @@ fn finish_parse_fun_decl_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
         if !ctx.check_token(&TokenValue::RightParen) {
             while {
                 if params.len() >= MAX_FUNCTION_ARGS {
-                    // TODO: this unnecessarily throws the parser into
+                    // FIXME(yanchith): this unnecessarily throws the parser into
                     // panic mode, find a way not to do that. Maybe have a
                     // separate valiation pass?
                     return Err(ParseError::TooManyFunParams(fun_ident));
@@ -1275,7 +1275,7 @@ fn finish_parse_for_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
         // `increment_expr`
 
         let mut body = if let Some(increment_expr) = increment_expr {
-            // TODO: can we affort to not wrap this in additional
+            // FIXME(yanchith): can we afford to not wrap this in additional
             // block? Would there be a hygiene problem?
             Stmt::Block(BlockStmt::new(vec![
                 loop_,
@@ -1504,7 +1504,7 @@ fn finish_parse_call(ctx: &mut ParseCtx, callee: Expr) -> ParseResult<Expr> {
     if !ctx.check_token(&TokenValue::RightParen) {
         while {
             if args.len() >= MAX_FUNCTION_ARGS {
-                // TODO: this unnecessarily throws the parser into
+                // FIXME(yanchith): this unnecessarily throws the parser into
                 // panic mode, find a way not to do that. Maybe have a
                 // separate valiation pass?
                 return Err(ParseError::TooManyCallArgs(callee));
@@ -1531,7 +1531,7 @@ fn parse_primary(ctx: &mut ParseCtx) -> ParseResult<Expr> {
             TokenValue::Nil => Ok(Expr::Lit(LitExpr::Nil)),
             TokenValue::Number(number) => Ok(Expr::Lit(LitExpr::Number(*number))),
             TokenValue::String(string) => Ok(Expr::Lit(LitExpr::String(string.clone()))),
-            // TODO: intern ident
+            // FIXME(yanchith): intern ident
             TokenValue::Ident(ident) => Ok(Expr::Var(VarExpr::new(ctx.next_id(), ident.clone()))),
             TokenValue::LeftParen => {
                 let expr = parse_expr(ctx)?;

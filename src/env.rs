@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::interpreter::Value;
 
-// TODO: std::fmt and error::Error
+// FIXME(yanchith): std::fmt and error::Error
 pub enum AssignError {
     ValueNotDeclared,
 }
@@ -12,7 +12,7 @@ pub enum AssignError {
 #[derive(Debug)]
 pub struct Env {
     parent: Option<Rc<RefCell<Env>>>,
-    // TODO: intern idents!
+    // FIXME(yanchith): intern idents!
     values: HashMap<String, Value>,
 }
 
