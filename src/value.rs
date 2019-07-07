@@ -1,7 +1,9 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::callable::Callable;
+use crate::callable::{Callable, FunctionCallable};
 use crate::interpreter::{InterpretResult, Interpreter};
 
 /// A Lox Value.
@@ -27,6 +29,14 @@ pub enum Value {
     /// syntax. `CallableValue` internally has an `Rc` pointer to the
     /// actual function implementation.
     Callable(CallableValue),
+    /// A class. Stored behind `Rc` so that it can be passed around by
+    /// value of its reference and that the instances can have a
+    /// pointer to it too.
+    Class(Rc<ClassValue>),
+    /// A class instance. Stored behind `Rc<RefCell>` so it can be
+    /// passed around by value of its reference and fields can be
+    /// mutated.
+    Instance(Rc<RefCell<InstanceValue>>),
 }
 
 impl Value {
@@ -48,6 +58,8 @@ impl fmt::Display for Value {
             Value::Boolean(boolean) => write!(f, "{}", boolean),
             Value::Nil => write!(f, "nil"),
             Value::Callable(callable) => write!(f, "{}", callable),
+            Value::Class(class) => write!(f, "{}", class),
+            Value::Instance(instance) => write!(f, "{}", instance.borrow()),
         }
     }
 }
@@ -83,5 +95,94 @@ impl PartialEq for CallableValue {
 impl fmt::Display for CallableValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "<callable {:p}>", &self.callable)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassValue {
+    ident: String, // FIXME(yanchith): intern idents
+    methods: HashMap<String, FunctionCallable>,
+}
+
+impl ClassValue {
+    pub fn new(ident: String, methods: HashMap<String, FunctionCallable>) -> Self {
+        Self { ident, methods }
+    }
+
+    pub fn ident(&self) -> &str {
+        &self.ident
+    }
+
+    pub fn init_arity(&self) -> usize {
+        if let Some(init_method) = self.find_method("init") {
+            init_method.arity()
+        } else {
+            0
+        }
+    }
+
+    pub fn init_call(
+        this: Rc<ClassValue>,
+        interpreter: &mut Interpreter,
+        args: &[Value],
+    ) -> InterpretResult<Value> {
+        let instance = Rc::new(RefCell::new(InstanceValue::new(this.clone())));
+
+        if let Some(init_method) = this.find_method("init") {
+            let initializer = init_method.bind(instance.clone());
+            initializer.call(interpreter, args)?;
+        }
+
+        Ok(Value::Instance(instance))
+    }
+
+    pub fn find_method(&self, name: &str) -> Option<&FunctionCallable> {
+        self.methods.get(name)
+    }
+}
+
+impl fmt::Display for ClassValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<class {}>", &self.ident)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstanceValue {
+    class: Rc<ClassValue>,
+    members: HashMap<String, Value>,
+}
+
+impl InstanceValue {
+    pub fn new(class: Rc<ClassValue>) -> Self {
+        Self {
+            class,
+            members: HashMap::new(),
+        }
+    }
+
+    pub fn class(&self) -> &ClassValue {
+        &self.class
+    }
+
+    pub fn get(this: Rc<RefCell<Self>>, field: &str) -> Option<Value> {
+        let this_ref = this.borrow();
+        this_ref.members.get(field).cloned().or_else(|| {
+            this_ref.class.find_method(field).cloned().map(|method| {
+                // FIXME(yanchith) :borrowck: can this Rc::clone be avoided?
+                let bound_method = method.bind(Rc::clone(&this));
+                Value::Callable(CallableValue::new(Box::new(bound_method)))
+            })
+        })
+    }
+
+    pub fn set(&mut self, field: String, value: Value) {
+        self.members.insert(field, value);
+    }
+}
+
+impl fmt::Display for InstanceValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<instance {}>", self.class.ident())
     }
 }

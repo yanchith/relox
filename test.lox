@@ -182,74 +182,192 @@
 // Closures
 ///////////
 
-var mutate_func;
-var print_func;
-{
-    var i = 0;
-    fun mutate_i() {
-        i = i + 1;
-    }
-    fun print_i() {
-        print i;
-    }
+// var mutate_func;
+// var print_func;
+// {
+//     var i = 0;
+//     fun mutate_i() {
+//         i = i + 1;
+//     }
+//     fun print_i() {
+//         print i;
+//     }
 
-    mutate_i();
-    print_i();
+//     mutate_i();
+//     print_i();
 
-    mutate_func = mutate_i;
-    print_func = print_i;
-}
-
-mutate_func();
-print_func();
-mutate_func();
-print_func();
-mutate_func();
-print_func();
-
-fun makePoint(x, y) {
-    fun closure(method) {
-        if (method == "x") return x;
-        if (method == "y") return y;
-        print "unknown method " + method;
-    }
-
-    return closure;
-}
-
-var point = makePoint(2, 3);
-print point("x"); // "2".
-print point("y"); // "3".
-
-// fun scope(s) {
-//     print s;
-//     var s = "inner";
-//     print s;
-// }
-// scope("param");
-
-// Nasty closure leak
-
-var a = "global";
-{
-    fun showA() {
-        print a;
-    }
-
-    showA();
-
-    var a = "block";
-
-    // This prints "block" if the leak is not fixed, but should always
-    // print "global"
-
-    showA();
-}
-
-// fun bad() {
-//     var double_decl = 1;
-//     var double_decl = "a";
+//     mutate_func = mutate_i;
+//     print_func = print_i;
 // }
 
-// Also bad!
-// return "foo";
+// mutate_func();
+// print_func();
+// mutate_func();
+// print_func();
+// mutate_func();
+// print_func();
+
+// fun makePoint(x, y) {
+//     fun closure(method) {
+//         if (method == "x") return x;
+//         if (method == "y") return y;
+//         print "unknown method " + method;
+//     }
+
+//     return closure;
+// }
+
+// var point = makePoint(2, 3);
+// print point("x"); // "2".
+// print point("y"); // "3".
+
+// // fun scope(s) {
+// //     print s;
+// //     var s = "inner";
+// //     print s;
+// // }
+// // scope("param");
+
+// // Nasty closure leak
+
+// var a = "global";
+// {
+//     fun showA() {
+//         print a;
+//     }
+
+//     showA();
+
+//     var a = "block";
+
+//     // This prints "block" if the leak is not fixed, but should always
+//     // print "global"
+
+//     showA();
+// }
+
+// // fun bad() {
+// //     var double_decl = 1;
+// //     var double_decl = "a";
+// // }
+
+// // Also bad!
+// // return "foo";
+
+//////////
+// Classes
+//////////
+
+class Bagel {}
+var bagel = Bagel();
+print Bagel;
+print bagel;
+
+var Bagel2 = Bagel;
+var bagel2 = Bagel2();
+print Bagel2;
+print bagel2;
+
+bagel.foo = 1;
+bagel.bar = "bar";
+bagel.bagel2 = bagel2;
+
+print bagel.foo;
+print bagel.bar;
+print bagel.bagel2;
+
+// print bagel.bad;
+
+class Loxy {
+    method() {
+        var i = 0;
+        return i;
+    }
+
+    another_method() {
+        print "I am Loxy";
+    }
+
+    double(i) {
+        return 2 * i;
+    }
+}
+
+var loxy = Loxy();
+
+print loxy.method() + 3.14;
+loxy.another_method();
+print loxy.double(5);
+
+class Cake {
+  taste() {
+    var adjective = "delicious";
+    print "The " + this.flavor + " cake is " + adjective + "!";
+  }
+}
+
+var cake = Cake();
+cake.flavor = "German chocolate";
+cake.taste(); // Prints "The German chocolate cake is delicious!".
+cake.flavor = "meatpie";
+cake.taste(); // Prints "The German chocolate cake is delicious!".
+
+class Thing {
+  getCallback() {
+    fun localFunction() {
+      print this;
+    }
+
+    return localFunction;
+  }
+}
+
+var callback = Thing().getCallback();
+callback();
+
+// fun notAMethod() {
+//     print this;
+// }
+// notAMethod();
+// print this;
+
+class Foo {
+    init() {
+        print this;
+    }
+}
+
+var foo = Foo();
+var foo2 = foo.init();
+print foo == foo2;
+
+class Point {
+    init(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+var p = Point(5, 1);
+print p.x;
+print p.y;
+// print p.z;
+
+class InitReturnsNil {
+    init() {
+        return;
+    }
+}
+
+print InitReturnsNil();
+
+{
+    class Scoped {}
+    print Scoped;
+    print Scoped();
+}
+
+// Classes must be scoped too
+// print Scoped;
+// print Scoped();
+

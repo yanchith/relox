@@ -1,3 +1,73 @@
+//! The parser.
+//!
+//! # Grammar
+//!
+//! ```text
+//! program   → declaration* EOF ;
+//! ```
+//!
+//! ## Statements
+//!
+//! We express "statement precedence" in production rules. Declaration
+//! statements are not allowed everywhere other stmts are, so we have
+//! to give them lower precedence, specifying them earlier in the
+//! production rules. Places that disallow declarations will use the
+//! later, higher-precedence rules only.
+//!
+//! ```text
+//! declaration → varDecl
+//!             → funDecl
+//!             → classDecl
+//!             | statement ;
+//!
+//! funDecl     → "fun" function ;
+//! classDecl   → "class" IDENTIFIER "{" function* "}" ;
+//! function    → IDENTIFIER "(" params? ")" block ;
+//! params      → IDENTIFIER ( "," IDENTIFIER )* ;
+//!
+//! statement → exprStmt
+//!           | ifStmt
+//!           | forStmt
+//!           | whileStmt
+//!           | printStmt
+//!           | returnStmt
+//!           | block ;
+//!
+//! exprStmt  → expr ";" ;
+//! ifStmt    → "if" "(" expression ")" statement ( "else" statement )? ;
+//! forStmt   → "for" "(" ( varDecl | exprStmt | ";" )
+//!                       expression? ";"
+//!                       expression? ")" statement ;
+//! whileStmt → "while" "(" expression ")" statement ;
+//! printStmt → "print" expr ";" ;
+//! returnStmt → "return" expression? ";" ;
+//! block     → "{" declaration* "}" ;
+//! ```
+//!
+//! ## Expressions
+//!
+//! We express op precedence in production rules.
+//!
+//! ```text
+//! expression     → assign ;
+//! assign         → ( call "." )? IDENTIFIER "=" assignment
+//!                | logic_or;
+//! logic_or       → logic_and ( "or" logic_and )* ;
+//! logic_and      → equality ( "and" equality )* ;
+//!
+//! equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+//! comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
+//! addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
+//! multiplication → unary ( ( "/" | "*" ) unary )* ;
+//! unary          → ( "!" | "-" ) unary
+//!                | call ;
+//! call           → primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
+//! primary        → NUMBER | STRING | "false" | "true" | "nil"
+//!                | "(" expr ")" ;
+//!
+//! args           → expression ( "," expression )* ;
+//! ```
+
 use std::convert::TryFrom;
 use std::fmt;
 use std::iter::Peekable;
@@ -15,11 +85,14 @@ pub enum ParseError {
     ExpectedSemicolonAfterReturnStmt(Option<Token>),
     ExpectedSemicolonAfterVarDeclStmt(Option<Token>),
     ExpectedIdentAfterVarKeyword(Option<Token>),
-    ExpectedIdentAfterFunKeyword(Option<Token>),
+    ExpectedFunToStartWithIdent(Option<Token>),
     ExpectedOpeningParenAfterFunIdent(Option<Token>),
     ExpectedIdentInFunParams(Option<Token>),
     ExpectedBlockAfterFunHeader(Option<Token>),
     ExpectedClosingParenAfterFunParams(Option<Token>),
+    ExpectedIdentAfterClassKeyword(Option<Token>),
+    ExpectedOpeningBraceAfterClassIdent(Option<Token>),
+    ExpectedClosingBraceAfterClassDecl,
     ExpectedClosingParenAfterGroupExpr(Option<Token>),
     ExpectedClosingBraceAfterBlockStmt,
     ExpectedOpeningParenAfterIf(Option<Token>),
@@ -30,6 +103,7 @@ pub enum ParseError {
     ExpectedSemicolonAfterForCond(Option<Token>),
     ExpectedClosingParenAfterForIncrement(Option<Token>),
     ExpectedClosingParenAfterCall(Option<Token>),
+    ExpectedIdentAfterDot(Option<Token>),
     ExpectedPrimaryExpr(Option<Token>),
     InvalidAssignTarget(Expr),
     TooManyCallArgs(Expr),
@@ -84,12 +158,12 @@ impl fmt::Display for ParseError {
                 f,
                 "Expected identifier after 'var' keyword but found end of input",
             ),
-            ParseError::ExpectedIdentAfterFunKeyword(Some(token)) => write!(
+            ParseError::ExpectedFunToStartWithIdent(Some(token)) => write!(
                 f,
                 "Expected identifier after 'fun' keyword but found token {}",
                 token,
             ),
-            ParseError::ExpectedIdentAfterFunKeyword(None) => write!(
+            ParseError::ExpectedFunToStartWithIdent(None) => write!(
                 f,
                 "Expected identifier after 'fun' keyword but found end of input",
             ),
@@ -128,6 +202,28 @@ impl fmt::Display for ParseError {
             ParseError::ExpectedClosingParenAfterFunParams(None) => write!(
                 f,
                 "Expeced closing parenthesis after function params but found end of input",
+            ),
+            ParseError::ExpectedIdentAfterClassKeyword(Some(token)) => write!(
+                f,
+                "Expected identifier after class keyword but found {}",
+                token,
+            ),
+            ParseError::ExpectedIdentAfterClassKeyword(None) => write!(
+                f,
+                "Expected identifier after class keyword but found end of input",
+            ),
+            ParseError::ExpectedOpeningBraceAfterClassIdent(Some(token)) => write!(
+                f,
+                "Expected opening brace after class identifier but found {}",
+                token,
+            ),
+            ParseError::ExpectedOpeningBraceAfterClassIdent(None) => write!(
+                f,
+                "Expected opening brace after class identifier but found end of input",
+            ),
+            ParseError::ExpectedClosingBraceAfterClassDecl => write!(
+                f,
+                "Expected closing brace after class declaration but found end of input"
             ),
             ParseError::ExpectedClosingParenAfterGroupExpr(Some(token)) => write!(
                 f,
@@ -214,6 +310,15 @@ impl fmt::Display for ParseError {
                 f,
                 "Expected closing parenthesis after function call but found end of input",
             ),
+            ParseError::ExpectedIdentAfterDot(Some(token)) => write!(
+                f,
+                "Expected identifier after dot but found {}",
+                token,
+            ),
+            ParseError::ExpectedIdentAfterDot(None) => write!(
+                f,
+                "Expected identifier after dot but found end of input",
+            ),
             ParseError::ExpectedPrimaryExpr(Some(token)) => {
                 write!(f, "Expected primary expression but found token {}", token)
             }
@@ -250,7 +355,7 @@ pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Program> {
     let mut stmts = Vec::new();
 
     while ctx.has_more_tokens() {
-        match parse_decl_stmt(&mut ctx) {
+        match parse_decl(&mut ctx) {
             Ok(stmt) => stmts.push(stmt),
             Err(err) => {
                 reporter.report_compile_error(err.to_string());
@@ -365,17 +470,19 @@ impl<'a> ParseCtx<'a> {
     }
 }
 
-fn parse_decl_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
+fn parse_decl(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     if ctx.read_token_if(&TokenValue::Var).is_some() {
-        finish_parse_var_decl_stmt(ctx)
+        finish_parse_var_decl(ctx)
     } else if ctx.read_token_if(&TokenValue::Fun).is_some() {
-        finish_parse_fun_decl_stmt(ctx)
+        finish_parse_fun_decl(ctx)
+    } else if ctx.read_token_if(&TokenValue::Class).is_some() {
+        finish_parse_class_decl(ctx)
     } else {
         parse_stmt(ctx)
     }
 }
 
-fn finish_parse_var_decl_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
+fn finish_parse_var_decl(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     if let Some(ident) = ctx.read_token_if_ident() {
         let initializer = if ctx.read_token_if(&TokenValue::Equal).is_some() {
             Some(parse_expr(ctx)?)
@@ -395,49 +502,76 @@ fn finish_parse_var_decl_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     }
 }
 
-fn finish_parse_fun_decl_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
-    if let Some(fun_ident) = ctx.read_token_if_ident() {
-        if ctx.read_token_if(&TokenValue::LeftParen).is_none() {
+fn finish_parse_fun_decl(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
+    parse_fun(ctx).map(Stmt::FunDecl)
+}
+
+fn finish_parse_class_decl(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
+    if let Some(class_ident) = ctx.read_token_if_ident() {
+        if ctx.read_token_if(&TokenValue::LeftBrace).is_none() {
             let token = ctx.peek_token().cloned();
-            return Err(ParseError::ExpectedOpeningParenAfterFunIdent(token));
-        }
-
-        let mut params = Vec::new();
-        if !ctx.check_token(&TokenValue::RightParen) {
-            while {
-                if params.len() >= MAX_FUNCTION_ARGS {
-                    // FIXME(yanchith): this unnecessarily throws the parser into
-                    // panic mode, find a way not to do that. Maybe have a
-                    // separate valiation pass?
-                    return Err(ParseError::TooManyFunParams(fun_ident));
-                }
-
-                if let Some(ident) = ctx.read_token_if_ident() {
-                    params.push(ident);
-                } else {
-                    let token = ctx.peek_token().cloned();
-                    return Err(ParseError::ExpectedIdentInFunParams(token));
-                }
-
-                ctx.read_token_if(&TokenValue::Comma).is_some()
-            } { /*This is a do-while loop*/ }
-        }
-
-        if ctx.read_token_if(&TokenValue::RightParen).is_some() {
-            if ctx.read_token_if(&TokenValue::LeftBrace).is_some() {
-                let body = finish_parse_block_stmt_raw(ctx)?;
-                Ok(Stmt::FunDecl(FunDeclStmt::new(fun_ident, params, body)))
-            } else {
-                let token = ctx.peek_token().cloned();
-                Err(ParseError::ExpectedBlockAfterFunHeader(token))
-            }
+            Err(ParseError::ExpectedOpeningBraceAfterClassIdent(token))
         } else {
-            let token = ctx.peek_token().cloned();
-            Err(ParseError::ExpectedClosingParenAfterFunParams(token))
+            let mut methods = Vec::new();
+            while !ctx.check_token(&TokenValue::RightBrace) && ctx.has_more_tokens() {
+                let method = parse_fun(ctx)?;
+                methods.push(method);
+            }
+            if ctx.read_token_if(&TokenValue::RightBrace).is_some() {
+                Ok(Stmt::ClassDecl(ClassDeclStmt::new(class_ident, methods)))
+            } else {
+                Err(ParseError::ExpectedClosingBraceAfterClassDecl)
+            }
         }
     } else {
         let token = ctx.peek_token().cloned();
-        Err(ParseError::ExpectedIdentAfterFunKeyword(token))
+        Err(ParseError::ExpectedIdentAfterClassKeyword(token))
+    }
+}
+
+fn parse_fun(ctx: &mut ParseCtx) -> ParseResult<FunDeclStmt> {
+    if let Some(fun_ident) = ctx.read_token_if_ident() {
+        if ctx.read_token_if(&TokenValue::LeftParen).is_none() {
+            let token = ctx.peek_token().cloned();
+            Err(ParseError::ExpectedOpeningParenAfterFunIdent(token))
+        } else {
+            let mut params = Vec::new();
+            if !ctx.check_token(&TokenValue::RightParen) {
+                while {
+                    if params.len() >= MAX_FUNCTION_ARGS {
+                        // FIXME(yanchith): this unnecessarily throws the parser into
+                        // panic mode, find a way not to do that. Maybe have a
+                        // separate valiation pass?
+                        return Err(ParseError::TooManyFunParams(fun_ident));
+                    }
+
+                    if let Some(ident) = ctx.read_token_if_ident() {
+                        params.push(ident);
+                    } else {
+                        let token = ctx.peek_token().cloned();
+                        return Err(ParseError::ExpectedIdentInFunParams(token));
+                    }
+
+                    ctx.read_token_if(&TokenValue::Comma).is_some()
+                } { /*This is a do-while loop*/ }
+            }
+
+            if ctx.read_token_if(&TokenValue::RightParen).is_some() {
+                if ctx.read_token_if(&TokenValue::LeftBrace).is_some() {
+                    let body = finish_parse_block_stmt_raw(ctx)?;
+                    Ok(FunDeclStmt::new(fun_ident, params, body))
+                } else {
+                    let token = ctx.peek_token().cloned();
+                    Err(ParseError::ExpectedBlockAfterFunHeader(token))
+                }
+            } else {
+                let token = ctx.peek_token().cloned();
+                Err(ParseError::ExpectedClosingParenAfterFunParams(token))
+            }
+        }
+    } else {
+        let token = ctx.peek_token().cloned();
+        Err(ParseError::ExpectedFunToStartWithIdent(token))
     }
 }
 
@@ -486,7 +620,7 @@ fn finish_parse_for_stmt(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
             None
         } else if ctx.read_token_if(&TokenValue::Var).is_some() {
             // This also consumes the semicolon
-            Some(finish_parse_var_decl_stmt(ctx)?)
+            Some(finish_parse_var_decl(ctx)?)
         } else {
             // This also consumes the semicolon
             Some(parse_expr_stmt(ctx)?)
@@ -607,7 +741,7 @@ fn finish_parse_block_stmt_raw(ctx: &mut ParseCtx) -> ParseResult<Vec<Stmt>> {
     let mut stmts = Vec::new();
 
     while !ctx.check_token(&TokenValue::RightBrace) && ctx.has_more_tokens() {
-        let stmt = parse_decl_stmt(ctx)?;
+        let stmt = parse_decl(ctx)?;
         stmts.push(stmt);
     }
 
@@ -636,14 +770,19 @@ fn parse_assign(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let expr = parse_logic_or(ctx)?;
     if ctx.read_token_if(&TokenValue::Equal).is_some() {
         // Instead of looping through operands like elsewhere, we
-        // recurse to `parse_assign` to emulate
-        // right-associativity
+        // recurse to `parse_assign` to have right-associativity
         let right = parse_assign(ctx)?;
 
         if let Expr::Var(var) = expr {
             Ok(Expr::Assign(AssignExpr::new(
                 ctx.next_id(),
                 var.ident().to_string(),
+                right,
+            )))
+        } else if let Expr::Get(get) = expr {
+            Ok(Expr::Set(SetExpr::new(
+                get.object().clone(),
+                get.field().to_string(),
                 right,
             )))
         } else {
@@ -741,8 +880,20 @@ fn parse_unary(ctx: &mut ParseCtx) -> ParseResult<Expr> {
 
 fn parse_call(ctx: &mut ParseCtx) -> ParseResult<Expr> {
     let mut expr = parse_primary(ctx)?;
-    while ctx.read_token_if(&TokenValue::LeftParen).is_some() {
-        expr = finish_parse_call(ctx, expr)?;
+
+    loop {
+        if ctx.read_token_if(&TokenValue::LeftParen).is_some() {
+            expr = finish_parse_call(ctx, expr)?;
+        } else if ctx.read_token_if(&TokenValue::Dot).is_some() {
+            if let Some(field_ident) = ctx.read_token_if_ident() {
+                expr = Expr::Get(GetExpr::new(expr, field_ident));
+            } else {
+                let token = ctx.peek_token().cloned();
+                return Err(ParseError::ExpectedIdentAfterDot(token));
+            }
+        } else {
+            break;
+        }
     }
 
     Ok(expr)
@@ -780,6 +931,7 @@ fn parse_primary(ctx: &mut ParseCtx) -> ParseResult<Expr> {
             TokenValue::Nil => Ok(Expr::Lit(LitExpr::Nil)),
             TokenValue::Number(number) => Ok(Expr::Lit(LitExpr::Number(*number))),
             TokenValue::String(string) => Ok(Expr::Lit(LitExpr::String(string.clone()))),
+            TokenValue::This => Ok(Expr::This(ThisExpr::new(ctx.next_id()))),
             // FIXME(yanchith): intern ident
             TokenValue::Ident(ident) => Ok(Expr::Var(VarExpr::new(ctx.next_id(), ident.clone()))),
             TokenValue::LeftParen => {

@@ -2,7 +2,7 @@ use std::iter::Peekable;
 use std::str::{Chars, FromStr};
 
 use crate::reporter::Reporter;
-use crate::token::{Token, TokenValue, Span};
+use crate::token::{Span, Token, TokenValue};
 
 // FIXME(yanchith): return a result and add a error type
 

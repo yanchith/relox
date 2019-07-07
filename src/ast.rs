@@ -1,71 +1,3 @@
-//! The AST definition.
-//!
-//! # Grammar
-//!
-//! ```text
-//! program   → declaration* EOF ;
-//! ```
-//!
-//! ## Statements
-//!
-//! We express "statement precedence" in production rules. Declaration
-//! statements are not allowed everywhere other stmts are, so we have
-//! to give them lower precedence, specifying them earlier in the
-//! production rules. Places that disallow declarations will use the
-//! later, higher-precedence rules only.
-//!
-//! ```text
-//! declaration → varDeclStmt
-//!             → funDeclStmt
-//!             | statement ;
-//!
-//! funDeclStmt → "fun" function ;
-//! function    → IDENTIFIER "(" params? ")" block ;
-//! params      → IDENTIFIER ( "," IDENTIFIER )* ;
-//!
-//! statement → exprStmt
-//!           | ifStmt
-//!           | forStmt
-//!           | whileStmt
-//!           | printStmt
-//!           | returnStmt
-//!           | block ;
-//!
-//! exprStmt  → expr ";" ;
-//! ifStmt    → "if" "(" expression ")" statement ( "else" statement )? ;
-//! forStmt   → "for" "(" ( varDeclStmt | exprStmt | ";" )
-//!                       expression? ";"
-//!                       expression? ")" statement ;
-//! whileStmt → "while" "(" expression ")" statement ;
-//! printStmt → "print" expr ";" ;
-//! returnStmt → "return" expression? ";" ;
-//! block     → "{" declaration* "}" ;
-//! ```
-//!
-//! ## Expressions
-//!
-//! We express op precedence in production rules.
-//!
-//! ```text
-//! expression     → assign ;
-//! assign         → identifier "=" assign
-//!                | logic_or ;
-//! logic_or       → logic_and ( "or" logic_and )* ;
-//! logic_and      → equality ( "and" equality )* ;
-//!
-//! equality       → comparison ( ( "!=" | "==" ) comparison )* ;
-//! comparison     → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
-//! addition       → multiplication ( ( "-" | "+" ) multiplication )* ;
-//! multiplication → unary ( ( "/" | "*" ) unary )* ;
-//! unary          → ( "!" | "-" ) unary
-//!                | call ;
-//! call           → primary ( "(" args? ")" )* ;
-//! primary        → NUMBER | STRING | "false" | "true" | "nil"
-//!                | "(" expr ")" ;
-//!
-//! args           → expression ( "," expression )* ;
-//! ```
-
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -105,6 +37,7 @@ impl fmt::Display for Program {
 pub enum Stmt {
     VarDecl(VarDeclStmt),
     FunDecl(FunDeclStmt),
+    ClassDecl(ClassDeclStmt),
     Expr(ExprStmt),
     If(IfStmt),
     While(WhileStmt),
@@ -118,6 +51,7 @@ impl fmt::Display for Stmt {
         match self {
             Stmt::VarDecl(var_decl) => write!(f, "{}", var_decl),
             Stmt::FunDecl(fun_decl) => write!(f, "{}", fun_decl),
+            Stmt::ClassDecl(class_decl) => write!(f, "{}", class_decl),
             Stmt::Expr(expr) => write!(f, "{}", expr),
             Stmt::If(if_) => write!(f, "{}", if_),
             Stmt::While(while_) => write!(f, "{}", while_),
@@ -189,17 +123,52 @@ impl FunDeclStmt {
 
 impl fmt::Display for FunDeclStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("(fun (params")?;
+        f.write_str("(fun ")?;
+        f.write_str(&self.ident)?;
 
         for param in &self.params {
             f.write_str(" ")?;
             f.write_str(param)?;
         }
-        f.write_str(")")?;
 
         for stmt in &self.body {
             f.write_str(" ")?;
             f.write_str(&stmt.to_string())?;
+        }
+        f.write_str(")")?;
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassDeclStmt {
+    ident: String, // FIXME(yanchith): intern
+    methods: Vec<FunDeclStmt>,
+}
+
+impl ClassDeclStmt {
+    pub fn new(ident: String, methods: Vec<FunDeclStmt>) -> Self {
+        Self { ident, methods }
+    }
+
+    pub fn ident(&self) -> &str {
+        &self.ident
+    }
+
+    pub fn methods(&self) -> &[FunDeclStmt] {
+        &self.methods
+    }
+}
+
+impl fmt::Display for ClassDeclStmt {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("(class ")?;
+        f.write_str(&self.ident)?;
+
+        for method in &self.methods {
+            f.write_str(" ")?;
+            f.write_str(&method.to_string())?;
         }
         f.write_str(")")?;
 
@@ -383,6 +352,9 @@ pub enum Expr {
     Var(VarExpr),
     Assign(AssignExpr),
     Call(CallExpr),
+    Get(GetExpr),
+    Set(SetExpr),
+    This(ThisExpr),
 }
 
 impl fmt::Display for Expr {
@@ -396,6 +368,9 @@ impl fmt::Display for Expr {
             Expr::Var(var) => write!(f, "{}", var),
             Expr::Assign(assign) => write!(f, "{}", assign),
             Expr::Call(call) => write!(f, "{}", call),
+            Expr::Get(get) => write!(f, "{}", get),
+            Expr::Set(set) => write!(f, "{}", set),
+            Expr::This(this) => write!(f, "{}", this),
         }
     }
 }
@@ -637,6 +612,91 @@ impl fmt::Display for CallExpr {
         f.write_str(")")?;
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GetExpr {
+    object: Box<Expr>,
+    field: String,
+}
+
+impl GetExpr {
+    pub fn new(object: Expr, field: String) -> Self {
+        Self {
+            object: Box::new(object),
+            field,
+        }
+    }
+
+    pub fn object(&self) -> &Expr {
+        &self.object
+    }
+
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+}
+
+impl fmt::Display for GetExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "(. {} {})", self.object, self.field)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetExpr {
+    object: Box<Expr>,
+    field: String,
+    value: Box<Expr>,
+}
+
+impl SetExpr {
+    pub fn new(object: Expr, field: String, value: Expr) -> Self {
+        Self {
+            object: Box::new(object),
+            field,
+            value: Box::new(value),
+        }
+    }
+
+    pub fn object(&self) -> &Expr {
+        &self.object
+    }
+
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+
+    pub fn value(&self) -> &Expr {
+        &self.value
+    }
+}
+
+impl fmt::Display for SetExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "(.= {} {} {})", self.object, self.field, self.value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThisExpr {
+    ast_id: u64,
+}
+
+impl ThisExpr {
+    pub fn new(ast_id: u64) -> Self {
+        Self { ast_id }
+    }
+
+    pub fn ast_id(&self) -> u64 {
+        self.ast_id
+    }
+}
+
+impl fmt::Display for ThisExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "this")
     }
 }
 

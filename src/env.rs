@@ -5,6 +5,7 @@ use std::rc::Rc;
 use crate::value::Value;
 
 // FIXME(yanchith): std::fmt and error::Error
+#[derive(Debug)]
 pub enum AssignError {
     ValueNotDeclared,
 }

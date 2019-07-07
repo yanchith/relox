@@ -8,7 +8,7 @@ use crate::ast;
 use crate::callable::{FunctionCallable, NativeCallableClock};
 use crate::env::{AssignError, Env};
 use crate::reporter::Reporter;
-use crate::value::{CallableValue, Value};
+use crate::value::{CallableValue, ClassValue, InstanceValue, Value};
 
 // FIXME(yanchith): add Token/Span info
 // FIXME(yanchith): implement std::error:Error
@@ -20,6 +20,8 @@ pub enum InterpretError {
     WrongNumberOfArgsToCallable(usize, usize), // FIXME(yanchith): add callable ident
     UndeclaredVariableUse,                     // FIXME(yanchith): add variable name
     UndeclaredVariableAssign(String),
+    AccessOnNoninstanceValue, // FIXME(yanchith): add more info
+    UndefinedPropertyUse(String, String),
 }
 
 impl fmt::Display for InterpretError {
@@ -38,6 +40,12 @@ impl fmt::Display for InterpretError {
             InterpretError::UndeclaredVariableUse => write!(f, "Use of undeclared variable"),
             InterpretError::UndeclaredVariableAssign(ident) => {
                 write!(f, "Assign to undeclared variable {}", ident)
+            }
+            InterpretError::AccessOnNoninstanceValue => {
+                write!(f, "Access expression applied on noninstance value")
+            }
+            InterpretError::UndefinedPropertyUse(class, field) => {
+                write!(f, "Class {} does not have a field {}", class, field)
             }
         }
     }
@@ -106,6 +114,11 @@ impl Interpreter {
         self.env = new_env;
     }
 
+    // FIXME(yanchith): don't return a value from here -> even
+    // expression statements should not return anything. Instead allow
+    // interpretting expressions in repl explicitely. Maybe `Program`
+    // should be an enum: `Expr | Stmts` and `interpret` should be
+    // able to handle expression programs?
     fn eval_stmt(&mut self, stmt: &ast::Stmt) -> InterpretResult<Value> {
         match stmt {
             ast::Stmt::VarDecl(var_decl) => {
@@ -121,12 +134,37 @@ impl Interpreter {
                 Ok(Value::Nil)
             }
             ast::Stmt::FunDecl(fun_decl) => {
-                let function = FunctionCallable::new(fun_decl.clone(), Rc::clone(&self.env));
-                let callable = Value::Callable(CallableValue::new(Box::new(function)));
+                let function = FunctionCallable::new(fun_decl.clone(), Rc::clone(&self.env), false);
+                let value = Value::Callable(CallableValue::new(Box::new(function)));
 
                 self.env
                     .borrow_mut()
-                    .define(fun_decl.ident().to_string(), callable);
+                    .define(fun_decl.ident().to_string(), value);
+
+                Ok(Value::Nil)
+            }
+            ast::Stmt::ClassDecl(class_decl) => {
+                self.env
+                    .borrow_mut()
+                    .define(class_decl.ident().to_string(), Value::Nil);
+
+                let mut methods = HashMap::with_capacity(class_decl.methods().len());
+                for method in class_decl.methods() {
+                    let function = FunctionCallable::new(
+                        method.clone(),
+                        Rc::clone(&self.env),
+                        method.ident() == "init",
+                    );
+                    methods.insert(method.ident().to_string(), function);
+                }
+
+                let class = ClassValue::new(class_decl.ident().to_string(), methods);
+                let value = Value::Class(Rc::new(class));
+
+                self.env
+                    .borrow_mut()
+                    .assign_here(class_decl.ident(), value)
+                    .expect("Class must have been declared prior to assig");
 
                 Ok(Value::Nil)
             }
@@ -184,6 +222,9 @@ impl Interpreter {
             ast::Expr::Var(var) => self.eval_var(var),
             ast::Expr::Assign(assign) => self.eval_assign(assign),
             ast::Expr::Call(call) => self.eval_call(call),
+            ast::Expr::Get(get) => self.eval_get(get),
+            ast::Expr::Set(set) => self.eval_set(set),
+            ast::Expr::This(this) => self.eval_this(this),
         }
     }
 
@@ -314,7 +355,11 @@ impl Interpreter {
                 .assign_at_distance(lvalue, *distance, rvalue.clone());
             Ok(rvalue)
         } else {
-            match self.globals.borrow_mut().assign_here(lvalue, rvalue.clone()) {
+            match self
+                .globals
+                .borrow_mut()
+                .assign_here(lvalue, rvalue.clone())
+            {
                 Ok(()) => Ok(rvalue),
                 Err(AssignError::ValueNotDeclared) => {
                     let ident = lvalue.to_string();
@@ -327,26 +372,88 @@ impl Interpreter {
     fn eval_call(&mut self, call: &ast::CallExpr) -> InterpretResult<Value> {
         let callee = self.eval_expr(call.callee())?;
 
-        if let Value::Callable(callable_value) = callee {
-            let provided_args_len = call.args().len();
-            let required_args_len = callable_value.arity();
-            if provided_args_len != required_args_len {
-                Err(InterpretError::WrongNumberOfArgsToCallable(
-                    provided_args_len,
-                    required_args_len,
-                ))
-            } else {
-                let mut args = Vec::with_capacity(call.args().len());
+        match callee {
+            Value::Callable(callable) => {
+                let provided_args_len = call.args().len();
+                let required_args_len = callable.arity();
+                if provided_args_len != required_args_len {
+                    Err(InterpretError::WrongNumberOfArgsToCallable(
+                        provided_args_len,
+                        required_args_len,
+                    ))
+                } else {
+                    let mut args = Vec::with_capacity(call.args().len());
 
-                for arg_expr in call.args() {
-                    let arg = self.eval_expr(arg_expr)?;
-                    args.push(arg);
+                    for arg_expr in call.args() {
+                        let arg = self.eval_expr(arg_expr)?;
+                        args.push(arg);
+                    }
+
+                    callable.call(self, &args)
                 }
-
-                callable_value.call(self, &args)
             }
-        } else {
-            Err(InterpretError::ValueNotCallable(callee))
+            Value::Class(class) => {
+                let provided_args_len = call.args().len();
+                let required_args_len = class.init_arity();
+                if provided_args_len != required_args_len {
+                    Err(InterpretError::WrongNumberOfArgsToCallable(
+                        provided_args_len,
+                        required_args_len,
+                    ))
+                } else {
+                    let mut args = Vec::with_capacity(call.args().len() + 1);
+
+                    for arg_expr in call.args() {
+                        let arg = self.eval_expr(arg_expr)?;
+                        args.push(arg);
+                    }
+
+                    ClassValue::init_call(Rc::clone(&class), self, &args)
+                }
+            }
+            _ => Err(InterpretError::ValueNotCallable(callee)),
         }
+    }
+
+    fn eval_get(&mut self, get: &ast::GetExpr) -> InterpretResult<Value> {
+        let object = self.eval_expr(get.object())?;
+
+        match object {
+            Value::Instance(instance) => InstanceValue::get(instance.clone(), get.field())
+                .ok_or_else(|| {
+                    InterpretError::UndefinedPropertyUse(
+                        instance.borrow().class().ident().to_string(),
+                        get.field().to_string(),
+                    )
+                }),
+            _ => Err(InterpretError::AccessOnNoninstanceValue),
+        }
+    }
+
+    fn eval_set(&mut self, set: &ast::SetExpr) -> InterpretResult<Value> {
+        let object = self.eval_expr(set.object())?;
+
+        match object {
+            Value::Instance(instance) => {
+                // FIXME(yanchith): what do other languages do? This
+                // is underspecified - we don't try to evaluate the
+                // value before we have a place to shove it to, but
+                // users might be expecting us to.
+                let value = self.eval_expr(set.value())?;
+                let mut instance_mut = instance.borrow_mut();
+                instance_mut.set(set.field().to_string(), value.clone());
+
+                Ok(value)
+            }
+            _ => Err(InterpretError::AccessOnNoninstanceValue),
+        }
+    }
+
+    fn eval_this(&mut self, this: &ast::ThisExpr) -> InterpretResult<Value> {
+        let distance = self
+            .locals
+            .get(&this.ast_id())
+            .expect("'this' must always be resolved");
+        Ok(self.env.borrow().get_at_distance("this", *distance))
     }
 }

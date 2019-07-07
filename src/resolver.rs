@@ -12,6 +12,8 @@ pub enum ResolveError {
     VarReadsItselfInInitializer(String),
     VarRedeclaredInLocalScope(String),
     TopLevelReturnStatement,
+    ThisOutsideMethod,
+    InitializerReturnsValue,
 }
 
 impl fmt::Display for ResolveError {
@@ -28,6 +30,8 @@ impl fmt::Display for ResolveError {
             ResolveError::TopLevelReturnStatement => {
                 write!(f, "Can't use top level return statement")
             }
+            ResolveError::ThisOutsideMethod => write!(f, "Can't use 'this' outside of methods"),
+            ResolveError::InitializerReturnsValue => write!(f, "Initializers Can't return a value"),
         }
     }
 }
@@ -44,16 +48,25 @@ pub fn resolve(reporter: &mut Reporter, interpreter: &mut Interpreter, stmts: &[
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum FunctionTy {
+enum FunTy {
     None,
     Function,
+    Method,
+    Initializer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ClassTy {
+    None,
+    Class,
 }
 
 #[derive(Debug)]
 struct ResolveCtx<'a> {
     interpreter: &'a mut Interpreter,
     scopes: Vec<HashMap<String, bool>>,
-    current_function: FunctionTy,
+    current_fun: FunTy,
+    current_class: ClassTy,
 }
 
 impl<'a> ResolveCtx<'a> {
@@ -61,7 +74,8 @@ impl<'a> ResolveCtx<'a> {
         Self {
             interpreter,
             scopes: Vec::new(),
-            current_function: FunctionTy::None,
+            current_fun: FunTy::None,
+            current_class: ClassTy::None,
         }
     }
 
@@ -73,12 +87,20 @@ impl<'a> ResolveCtx<'a> {
         self.scopes.pop();
     }
 
-    fn current_function(&self) -> FunctionTy {
-        self.current_function
+    fn current_fun(&self) -> FunTy {
+        self.current_fun
     }
 
-    fn set_current_function(&mut self, function: FunctionTy) {
-        self.current_function = function;
+    fn set_current_fun(&mut self, fun: FunTy) {
+        self.current_fun = fun;
+    }
+
+    fn current_class(&self) -> ClassTy {
+        self.current_class
+    }
+
+    fn set_current_class(&mut self, class: ClassTy) {
+        self.current_class = class;
     }
 
     fn declare(&mut self, ident: &str) -> ResolveResult {
@@ -131,7 +153,8 @@ fn resolve_stmts(ctx: &mut ResolveCtx, stmts: &[ast::Stmt]) -> ResolveResult {
 fn resolve_stmt(ctx: &mut ResolveCtx, stmt: &ast::Stmt) -> ResolveResult {
     match stmt {
         ast::Stmt::VarDecl(var_decl) => resolve_var_decl_stmt(ctx, var_decl),
-        ast::Stmt::FunDecl(fun_decl) => resolve_fun_decl_stmt(ctx, fun_decl),
+        ast::Stmt::FunDecl(fun_decl) => resolve_fun_decl_stmt(ctx, fun_decl, FunTy::Function),
+        ast::Stmt::ClassDecl(class_decl) => resolve_class_decl_stmt(ctx, class_decl),
         ast::Stmt::Expr(expr) => resolve_expr_stmt(ctx, expr),
         ast::Stmt::If(if_) => resolve_if_stmt(ctx, if_),
         ast::Stmt::While(while_) => resolve_while_stmt(ctx, while_),
@@ -158,12 +181,16 @@ fn resolve_var_decl_stmt(ctx: &mut ResolveCtx, var_decl: &ast::VarDeclStmt) -> R
     Ok(())
 }
 
-fn resolve_fun_decl_stmt(ctx: &mut ResolveCtx, fun_decl: &ast::FunDeclStmt) -> ResolveResult {
+fn resolve_fun_decl_stmt(
+    ctx: &mut ResolveCtx,
+    fun_decl: &ast::FunDeclStmt,
+    fun_ty: FunTy,
+) -> ResolveResult {
     ctx.declare(fun_decl.ident())?;
     ctx.define(fun_decl.ident());
 
-    let enclosing_function = ctx.current_function();
-    ctx.set_current_function(FunctionTy::Function);
+    let enclosing_fun = ctx.current_fun();
+    ctx.set_current_fun(fun_ty);
     ctx.push_scope();
     for param in fun_decl.params() {
         ctx.declare(param)?;
@@ -171,7 +198,34 @@ fn resolve_fun_decl_stmt(ctx: &mut ResolveCtx, fun_decl: &ast::FunDeclStmt) -> R
     }
     resolve_stmts(ctx, fun_decl.body())?;
     ctx.pop_scope();
-    ctx.set_current_function(enclosing_function);
+    ctx.set_current_fun(enclosing_fun);
+
+    Ok(())
+}
+
+fn resolve_class_decl_stmt(ctx: &mut ResolveCtx, class_decl: &ast::ClassDeclStmt) -> ResolveResult {
+    ctx.declare(class_decl.ident())?;
+    ctx.define(class_decl.ident());
+
+    // A class has its own scope with "this" defined
+    let enclosing_class = ctx.current_class();
+    ctx.set_current_class(ClassTy::Class);
+    ctx.push_scope();
+
+    ctx.declare("this")?;
+    ctx.define("this");
+
+    for method in class_decl.methods() {
+        let fun_ty = if method.ident() == "init" {
+            FunTy::Initializer
+        } else {
+            FunTy::Method
+        };
+        resolve_fun_decl_stmt(ctx, method, fun_ty)?;
+    }
+
+    ctx.pop_scope();
+    ctx.set_current_class(enclosing_class);
 
     Ok(())
 }
@@ -202,10 +256,15 @@ fn resolve_print_stmt(ctx: &mut ResolveCtx, print: &ast::PrintStmt) -> ResolveRe
 }
 
 fn resolve_return_stmt(ctx: &mut ResolveCtx, return_: &ast::ReturnStmt) -> ResolveResult {
-    if let FunctionTy::None = ctx.current_function() {
+    let current_fun = ctx.current_fun();
+    if current_fun == FunTy::None {
         Err(ResolveError::TopLevelReturnStatement)
     } else if let Some(expr) = return_.expr() {
-        resolve_expr(ctx, expr)
+        if current_fun == FunTy::Initializer {
+            Err(ResolveError::InitializerReturnsValue)
+        } else {
+            resolve_expr(ctx, expr)
+        }
     } else {
         Ok(())
     }
@@ -229,6 +288,9 @@ fn resolve_expr(ctx: &mut ResolveCtx, expr: &ast::Expr) -> ResolveResult {
         ast::Expr::Var(var) => resolve_var_expr(ctx, var),
         ast::Expr::Assign(assign) => resolve_assign_expr(ctx, assign),
         ast::Expr::Call(call) => resolve_call_expr(ctx, call),
+        ast::Expr::Get(get) => resolve_get_expr(ctx, get),
+        ast::Expr::Set(set) => resolve_set_expr(ctx, set),
+        ast::Expr::This(this) => resolve_this_expr(ctx, this),
     }
 }
 
@@ -286,4 +348,24 @@ fn resolve_call_expr(ctx: &mut ResolveCtx, call: &ast::CallExpr) -> ResolveResul
     }
 
     Ok(())
+}
+
+fn resolve_get_expr(ctx: &mut ResolveCtx, get: &ast::GetExpr) -> ResolveResult {
+    resolve_expr(ctx, get.object())
+}
+
+fn resolve_set_expr(ctx: &mut ResolveCtx, set: &ast::SetExpr) -> ResolveResult {
+    resolve_expr(ctx, set.object())?;
+    resolve_expr(ctx, set.value())?;
+
+    Ok(())
+}
+
+fn resolve_this_expr(ctx: &mut ResolveCtx, this: &ast::ThisExpr) -> ResolveResult {
+    if let ClassTy::None = ctx.current_class() {
+        Err(ResolveError::ThisOutsideMethod)
+    } else {
+        ctx.write_resolution(this.ast_id(), "this");
+        Ok(())
+    }
 }
