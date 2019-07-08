@@ -144,16 +144,25 @@ impl fmt::Display for FunDeclStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassDeclStmt {
     ident: String, // FIXME(yanchith): intern
+    superclass: Option<VarExpr>,
     methods: Vec<FunDeclStmt>,
 }
 
 impl ClassDeclStmt {
-    pub fn new(ident: String, methods: Vec<FunDeclStmt>) -> Self {
-        Self { ident, methods }
+    pub fn new(ident: String, superclass: Option<VarExpr>, methods: Vec<FunDeclStmt>) -> Self {
+        Self {
+            ident,
+            superclass,
+            methods,
+        }
     }
 
     pub fn ident(&self) -> &str {
         &self.ident
+    }
+
+    pub fn superclass(&self) -> Option<&VarExpr> {
+        self.superclass.as_ref()
     }
 
     pub fn methods(&self) -> &[FunDeclStmt] {
@@ -164,7 +173,11 @@ impl ClassDeclStmt {
 impl fmt::Display for ClassDeclStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("(class ")?;
+        f.write_str("(< ")?;
         f.write_str(&self.ident)?;
+        f.write_str(" ")?;
+        f.write_str(self.superclass.as_ref().map(|s| s.ident()).unwrap_or("nil"))?;
+        f.write_str(")")?;
 
         for method in &self.methods {
             f.write_str(" ")?;

@@ -14,6 +14,7 @@ pub enum ResolveError {
     TopLevelReturnStatement,
     ThisOutsideMethod,
     InitializerReturnsValue,
+    ClassInheritsFromItself(String),
 }
 
 impl fmt::Display for ResolveError {
@@ -32,6 +33,9 @@ impl fmt::Display for ResolveError {
             }
             ResolveError::ThisOutsideMethod => write!(f, "Can't use 'this' outside of methods"),
             ResolveError::InitializerReturnsValue => write!(f, "Initializers Can't return a value"),
+            ResolveError::ClassInheritsFromItself(ident) => {
+                write!(f, "Class {} inherits from itself", ident)
+            }
         }
     }
 }
@@ -206,6 +210,17 @@ fn resolve_fun_decl_stmt(
 fn resolve_class_decl_stmt(ctx: &mut ResolveCtx, class_decl: &ast::ClassDeclStmt) -> ResolveResult {
     ctx.declare(class_decl.ident())?;
     ctx.define(class_decl.ident());
+
+    // Try resolving superclass expression if any
+    if let Some(superclass) = class_decl.superclass() {
+        if class_decl.ident() == superclass.ident() {
+            let ident = class_decl.ident().to_string();
+            return Err(ResolveError::ClassInheritsFromItself(ident));
+        }
+
+        // Superclass is a VarExpr
+        resolve_var_expr(ctx, superclass)?;
+    }
 
     // A class has its own scope with "this" defined
     let enclosing_class = ctx.current_class();

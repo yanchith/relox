@@ -101,12 +101,21 @@ impl fmt::Display for CallableValue {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassValue {
     ident: String, // FIXME(yanchith): intern idents
+    superclass: Option<Rc<ClassValue>>,
     methods: HashMap<String, FunctionCallable>,
 }
 
 impl ClassValue {
-    pub fn new(ident: String, methods: HashMap<String, FunctionCallable>) -> Self {
-        Self { ident, methods }
+    pub fn new(
+        ident: String,
+        superclass: Option<Rc<ClassValue>>,
+        methods: HashMap<String, FunctionCallable>,
+    ) -> Self {
+        Self {
+            ident,
+            superclass,
+            methods,
+        }
     }
 
     pub fn ident(&self) -> &str {
@@ -137,7 +146,12 @@ impl ClassValue {
     }
 
     pub fn find_method(&self, name: &str) -> Option<&FunctionCallable> {
-        self.methods.get(name)
+        self.methods.get(name).or_else(|| {
+            self.superclass
+                .as_ref()
+                .map(|s| s.find_method(name))
+                .unwrap_or(None)
+        })
     }
 }
 

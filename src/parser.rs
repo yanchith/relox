@@ -93,6 +93,7 @@ pub enum ParseError {
     ExpectedIdentAfterClassKeyword(Option<Token>),
     ExpectedOpeningBraceAfterClassIdent(Option<Token>),
     ExpectedClosingBraceAfterClassDecl,
+    ExpectedSuperclassIdent(Option<Token>),
     ExpectedClosingParenAfterGroupExpr(Option<Token>),
     ExpectedClosingBraceAfterBlockStmt,
     ExpectedOpeningParenAfterIf(Option<Token>),
@@ -224,6 +225,15 @@ impl fmt::Display for ParseError {
             ParseError::ExpectedClosingBraceAfterClassDecl => write!(
                 f,
                 "Expected closing brace after class declaration but found end of input"
+            ),
+            ParseError::ExpectedSuperclassIdent(Some(token)) => write!(
+                f,
+                "Expected superclass identifier in class header after '<' but found {}",
+                token,
+            ),
+            ParseError::ExpectedSuperclassIdent(None) => write!(
+                f,
+                "Expected superclass identifier in class header after '<' but found end of input",
             ),
             ParseError::ExpectedClosingParenAfterGroupExpr(Some(token)) => write!(
                 f,
@@ -508,6 +518,16 @@ fn finish_parse_fun_decl(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
 
 fn finish_parse_class_decl(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
     if let Some(class_ident) = ctx.read_token_if_ident() {
+        let mut superclass = None;
+        if ctx.read_token_if(&TokenValue::Less).is_some() {
+            if let Some(ident) = ctx.read_token_if_ident() {
+                superclass = Some(VarExpr::new(ctx.next_id(), ident));
+            } else {
+                let token = ctx.peek_token().cloned();
+                return Err(ParseError::ExpectedSuperclassIdent(token));
+            }
+        }
+
         if ctx.read_token_if(&TokenValue::LeftBrace).is_none() {
             let token = ctx.peek_token().cloned();
             Err(ParseError::ExpectedOpeningBraceAfterClassIdent(token))
@@ -518,7 +538,11 @@ fn finish_parse_class_decl(ctx: &mut ParseCtx) -> ParseResult<Stmt> {
                 methods.push(method);
             }
             if ctx.read_token_if(&TokenValue::RightBrace).is_some() {
-                Ok(Stmt::ClassDecl(ClassDeclStmt::new(class_ident, methods)))
+                Ok(Stmt::ClassDecl(ClassDeclStmt::new(
+                    class_ident,
+                    superclass,
+                    methods,
+                )))
             } else {
                 Err(ParseError::ExpectedClosingBraceAfterClassDecl)
             }

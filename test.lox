@@ -371,3 +371,41 @@ print InitReturnsNil();
 // print Scoped;
 // print Scoped();
 
+//////////////
+// Inheritance
+//////////////
+
+// class Ooops < Ooops {}
+
+// var NotAClass = "badumts";
+// class Subclass < NotAClass {}
+
+class Doughnut {
+  cook() {
+    print "Fry until golden brown.";
+  }
+}
+
+class BostonCream < Doughnut {}
+
+BostonCream().cook();
+
+class Greeter {
+    init(name) {
+        this.name = name;
+    }
+
+    greet() {
+        print "Hello, " + this.name;
+    }
+}
+
+class Greetest < Greeter {
+    greet() {
+        print "Hello once more, " + this.name;
+    }
+}
+
+Greeter("Jan").greet();
+Greetest("Jan").greet();
+

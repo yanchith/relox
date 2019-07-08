@@ -22,6 +22,7 @@ pub enum InterpretError {
     UndeclaredVariableAssign(String),
     AccessOnNoninstanceValue, // FIXME(yanchith): add more info
     UndefinedPropertyUse(String, String),
+    SuperclassNotAClass(String),
 }
 
 impl fmt::Display for InterpretError {
@@ -47,6 +48,11 @@ impl fmt::Display for InterpretError {
             InterpretError::UndefinedPropertyUse(class, field) => {
                 write!(f, "Class {} does not have a field {}", class, field)
             }
+            InterpretError::SuperclassNotAClass(ident) => write!(
+                f,
+                "Classes can only inherit from other classes. {} is not a class",
+                ident,
+            ),
         }
     }
 }
@@ -122,113 +128,168 @@ impl Interpreter {
     fn eval_stmt(&mut self, stmt: &ast::Stmt) -> InterpretResult<Value> {
         match stmt {
             ast::Stmt::VarDecl(var_decl) => {
-                let value = match var_decl.initializer() {
-                    Some(expr) => self.eval_expr(expr)?,
-                    None => Value::Nil,
-                };
-
-                self.env
-                    .borrow_mut()
-                    .define(var_decl.ident().to_string(), value);
-
+                self.eval_var_decl_stmt(var_decl)?;
                 Ok(Value::Nil)
             }
             ast::Stmt::FunDecl(fun_decl) => {
-                let function = FunctionCallable::new(fun_decl.clone(), Rc::clone(&self.env), false);
-                let value = Value::Callable(CallableValue::new(Box::new(function)));
-
-                self.env
-                    .borrow_mut()
-                    .define(fun_decl.ident().to_string(), value);
-
+                self.eval_fun_decl_stmt(fun_decl)?;
                 Ok(Value::Nil)
             }
             ast::Stmt::ClassDecl(class_decl) => {
-                self.env
-                    .borrow_mut()
-                    .define(class_decl.ident().to_string(), Value::Nil);
-
-                let mut methods = HashMap::with_capacity(class_decl.methods().len());
-                for method in class_decl.methods() {
-                    let function = FunctionCallable::new(
-                        method.clone(),
-                        Rc::clone(&self.env),
-                        method.ident() == "init",
-                    );
-                    methods.insert(method.ident().to_string(), function);
-                }
-
-                let class = ClassValue::new(class_decl.ident().to_string(), methods);
-                let value = Value::Class(Rc::new(class));
-
-                self.env
-                    .borrow_mut()
-                    .assign_here(class_decl.ident(), value)
-                    .expect("Class must have been declared prior to assig");
-
+                self.eval_class_decl_stmt(class_decl)?;
                 Ok(Value::Nil)
             }
+            // TODO: stop returning the value he
             ast::Stmt::Expr(expr) => self.eval_expr(expr.expr()),
             ast::Stmt::If(if_) => {
-                let cond = self.eval_expr(if_.cond())?;
-                if cond.is_truthy() {
-                    self.eval_stmt(if_.then())?;
-                } else if let Some(else_) = if_.else_() {
-                    self.eval_stmt(else_)?;
-                }
-
+                self.eval_if_stmt(if_)?;
                 Ok(Value::Nil)
             }
             ast::Stmt::While(while_) => {
-                while self.eval_expr(while_.cond())?.is_truthy() {
-                    self.eval_stmt(while_.loop_())?;
-                }
-
+                self.eval_while_stmt(while_)?;
                 Ok(Value::Nil)
             }
             ast::Stmt::Print(print) => {
-                let value = self.eval_expr(print.expr())?;
-                println!("{}", value);
-
+                self.eval_print_stmt(print)?;
                 Ok(Value::Nil)
             }
             ast::Stmt::Return(return_) => {
-                let value = match return_.expr() {
-                    Some(expr) => self.eval_expr(expr)?,
-                    None => Value::Nil,
-                };
-                Err(InterpretError::Return(value))
+                // TODO: this actually always returns Err(Return), remove this hack!
+                self.eval_return_stmt(return_)?;
+                Ok(Value::Nil)
             }
             ast::Stmt::Block(block) => {
-                let new_env = Env::with_parent(Rc::clone(&self.env));
-                let old_env = mem::replace(&mut self.env, Rc::new(RefCell::new(new_env)));
-
-                let res = self.interpret_stmts(block.stmts());
-
-                self.env = old_env;
-
-                res.map(|()| Value::Nil)
+                self.eval_block_stmt(block)?;
+                Ok(Value::Nil)
             }
         }
+    }
+
+    fn eval_var_decl_stmt(&mut self, var_decl: &ast::VarDeclStmt) -> InterpretResult<()> {
+        let value = match var_decl.initializer() {
+            Some(expr) => self.eval_expr(expr)?,
+            None => Value::Nil,
+        };
+
+        self.env
+            .borrow_mut()
+            .define(var_decl.ident().to_string(), value);
+
+        Ok(())
+    }
+
+    fn eval_fun_decl_stmt(&mut self, fun_decl: &ast::FunDeclStmt) -> InterpretResult<()> {
+        let function = FunctionCallable::new(fun_decl.clone(), Rc::clone(&self.env), false);
+        let value = Value::Callable(CallableValue::new(Box::new(function)));
+
+        self.env
+            .borrow_mut()
+            .define(fun_decl.ident().to_string(), value);
+
+        Ok(())
+    }
+
+    fn eval_class_decl_stmt(&mut self, class_decl: &ast::ClassDeclStmt) -> InterpretResult<()> {
+        let superclass = if let Some(superclass_expr) = class_decl.superclass() {
+            let superclass = self.eval_var_expr(superclass_expr)?;
+            match superclass {
+                Value::Class(class) => Some(class),
+                _ => {
+                    let ident = superclass_expr.ident().to_string();
+                    return Err(InterpretError::SuperclassNotAClass(ident));
+                }
+            }
+        } else {
+            None
+        };
+
+        self.env
+            .borrow_mut()
+            .define(class_decl.ident().to_string(), Value::Nil);
+
+        let mut methods = HashMap::with_capacity(class_decl.methods().len());
+        for method in class_decl.methods() {
+            let function = FunctionCallable::new(
+                method.clone(),
+                Rc::clone(&self.env),
+                method.ident() == "init",
+            );
+            methods.insert(method.ident().to_string(), function);
+        }
+
+        let class = ClassValue::new(class_decl.ident().to_string(), superclass, methods);
+        let value = Value::Class(Rc::new(class));
+
+        self.env
+            .borrow_mut()
+            .assign_here(class_decl.ident(), value)
+            .expect("Class must have been declared prior to assig");
+
+        Ok(())
+    }
+
+    fn eval_if_stmt(&mut self, if_: &ast::IfStmt) -> InterpretResult<()> {
+        let cond = self.eval_expr(if_.cond())?;
+        if cond.is_truthy() {
+            self.eval_stmt(if_.then())?;
+        } else if let Some(else_) = if_.else_() {
+            self.eval_stmt(else_)?;
+        }
+
+        Ok(())
+    }
+
+    fn eval_while_stmt(&mut self, while_: &ast::WhileStmt) -> InterpretResult<()> {
+        while self.eval_expr(while_.cond())?.is_truthy() {
+            self.eval_stmt(while_.loop_())?;
+        }
+
+        Ok(())
+    }
+
+    fn eval_print_stmt(&mut self, print: &ast::PrintStmt) -> InterpretResult<()> {
+        let value = self.eval_expr(print.expr())?;
+        println!("{}", value);
+
+        Ok(())
+    }
+
+    fn eval_return_stmt(&mut self, return_: &ast::ReturnStmt) -> InterpretResult<()> {
+        let value = match return_.expr() {
+            Some(expr) => self.eval_expr(expr)?,
+            None => Value::Nil,
+        };
+        Err(InterpretError::Return(value))
+    }
+
+    fn eval_block_stmt(&mut self, block: &ast::BlockStmt) -> InterpretResult<()> {
+        let new_env = Env::with_parent(Rc::clone(&self.env));
+        let old_env = mem::replace(&mut self.env, Rc::new(RefCell::new(new_env)));
+
+        let res = self.interpret_stmts(block.stmts());
+
+        self.env = old_env;
+
+        res
     }
 
     fn eval_expr(&mut self, expr: &ast::Expr) -> InterpretResult<Value> {
         match expr {
-            ast::Expr::Lit(lit) => self.eval_lit(lit),
-            ast::Expr::Group(group) => self.eval_group(group),
-            ast::Expr::Unary(unary) => self.eval_unary(unary),
-            ast::Expr::Binary(binary) => self.eval_binary(binary),
-            ast::Expr::Logic(logic) => self.eval_logic(logic),
-            ast::Expr::Var(var) => self.eval_var(var),
-            ast::Expr::Assign(assign) => self.eval_assign(assign),
-            ast::Expr::Call(call) => self.eval_call(call),
-            ast::Expr::Get(get) => self.eval_get(get),
-            ast::Expr::Set(set) => self.eval_set(set),
-            ast::Expr::This(this) => self.eval_this(this),
+            ast::Expr::Lit(lit) => self.eval_lit_expr(lit),
+            ast::Expr::Group(group) => self.eval_group_expr(group),
+            ast::Expr::Unary(unary) => self.eval_unary_expr(unary),
+            ast::Expr::Binary(binary) => self.eval_binary_expr(binary),
+            ast::Expr::Logic(logic) => self.eval_logic_expr(logic),
+            ast::Expr::Var(var) => self.eval_var_expr(var),
+            ast::Expr::Assign(assign) => self.eval_assign_expr(assign),
+            ast::Expr::Call(call) => self.eval_call_expr(call),
+            ast::Expr::Get(get) => self.eval_get_expr(get),
+            ast::Expr::Set(set) => self.eval_set_expr(set),
+            ast::Expr::This(this) => self.eval_this_expr(this),
         }
     }
 
-    fn eval_lit(&self, lit: &ast::LitExpr) -> InterpretResult<Value> {
+    fn eval_lit_expr(&self, lit: &ast::LitExpr) -> InterpretResult<Value> {
         let value = match lit {
             ast::LitExpr::Number(number) => Value::Number(*number),
             // We clone the string from the AST, as we may be
@@ -247,11 +308,11 @@ impl Interpreter {
         Ok(value)
     }
 
-    fn eval_group(&mut self, group: &ast::GroupExpr) -> InterpretResult<Value> {
+    fn eval_group_expr(&mut self, group: &ast::GroupExpr) -> InterpretResult<Value> {
         self.eval_expr(group.expr())
     }
 
-    fn eval_unary(&mut self, unary: &ast::UnaryExpr) -> InterpretResult<Value> {
+    fn eval_unary_expr(&mut self, unary: &ast::UnaryExpr) -> InterpretResult<Value> {
         let value = self.eval_expr(unary.expr())?;
         match unary.op() {
             ast::UnaryOp::Minus => match &value {
@@ -262,7 +323,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_binary(&mut self, binary: &ast::BinaryExpr) -> InterpretResult<Value> {
+    fn eval_binary_expr(&mut self, binary: &ast::BinaryExpr) -> InterpretResult<Value> {
         let left_value = self.eval_expr(binary.left())?;
         let right_value = self.eval_expr(binary.right())?;
 
@@ -313,7 +374,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_logic(&mut self, logic: &ast::LogicExpr) -> InterpretResult<Value> {
+    fn eval_logic_expr(&mut self, logic: &ast::LogicExpr) -> InterpretResult<Value> {
         let left_value = self.eval_expr(logic.left())?;
 
         match logic.op() {
@@ -334,7 +395,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_var(&self, var: &ast::VarExpr) -> InterpretResult<Value> {
+    fn eval_var_expr(&self, var: &ast::VarExpr) -> InterpretResult<Value> {
         if let Some(distance) = self.locals.get(&var.ast_id()) {
             Ok(self.env.borrow().get_at_distance(var.ident(), *distance))
         } else {
@@ -345,7 +406,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_assign(&mut self, assign: &ast::AssignExpr) -> InterpretResult<Value> {
+    fn eval_assign_expr(&mut self, assign: &ast::AssignExpr) -> InterpretResult<Value> {
         let lvalue = assign.ident();
         let rvalue = self.eval_expr(assign.expr())?;
 
@@ -369,7 +430,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_call(&mut self, call: &ast::CallExpr) -> InterpretResult<Value> {
+    fn eval_call_expr(&mut self, call: &ast::CallExpr) -> InterpretResult<Value> {
         let callee = self.eval_expr(call.callee())?;
 
         match callee {
@@ -415,7 +476,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_get(&mut self, get: &ast::GetExpr) -> InterpretResult<Value> {
+    fn eval_get_expr(&mut self, get: &ast::GetExpr) -> InterpretResult<Value> {
         let object = self.eval_expr(get.object())?;
 
         match object {
@@ -430,7 +491,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_set(&mut self, set: &ast::SetExpr) -> InterpretResult<Value> {
+    fn eval_set_expr(&mut self, set: &ast::SetExpr) -> InterpretResult<Value> {
         let object = self.eval_expr(set.object())?;
 
         match object {
@@ -449,7 +510,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_this(&mut self, this: &ast::ThisExpr) -> InterpretResult<Value> {
+    fn eval_this_expr(&mut self, this: &ast::ThisExpr) -> InterpretResult<Value> {
         let distance = self
             .locals
             .get(&this.ast_id())
