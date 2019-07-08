@@ -72,10 +72,15 @@ use std::convert::TryFrom;
 use std::fmt;
 use std::iter::Peekable;
 use std::slice;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ast::*;
 use crate::reporter::Reporter;
 use crate::token::{Token, TokenValue};
+
+// FIXME(yanchith): instead of using atomics just make sure the parser
+// state exists globally and share it within the whole program.
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 // FIXME(yanchith): implement std::error:Error
 #[derive(Debug)]
@@ -393,23 +398,18 @@ pub fn parse(reporter: &mut Reporter, tokens: &[Token], allow_expr_progs: bool) 
 }
 
 struct ParseCtx<'a> {
-    next_id: u64,
     tokens: Peekable<slice::Iter<'a, Token>>,
 }
 
 impl<'a> ParseCtx<'a> {
     fn new(tokens: &'a [Token]) -> Self {
         Self {
-            next_id: 0,
             tokens: tokens.iter().peekable(),
         }
     }
 
     fn next_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        id
+        NEXT_ID.fetch_add(1, Ordering::SeqCst)
     }
 
     fn check_token(&mut self, token_value: &TokenValue) -> bool {
