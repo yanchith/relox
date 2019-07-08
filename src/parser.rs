@@ -3,7 +3,7 @@
 //! # Grammar
 //!
 //! ```text
-//! program   → declaration* EOF ;
+//! prog        → declaration* EOF ;
 //! ```
 //!
 //! ## Statements
@@ -360,7 +360,7 @@ impl fmt::Display for ParseError {
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
-pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Program> {
+pub fn parse(reporter: &mut Reporter, tokens: &[Token], allow_expr_progs: bool) -> Option<Prog> {
     let mut ctx = ParseCtx::new(tokens);
     let mut stmts = Vec::new();
 
@@ -375,9 +375,20 @@ pub fn parse(reporter: &mut Reporter, tokens: &[Token]) -> Option<Program> {
     }
 
     if reporter.has_compile_error() {
-        None
+        if allow_expr_progs {
+            let mut expr_ctx = ParseCtx::new(tokens);
+            match parse_expr(&mut expr_ctx) {
+                Ok(expr) => {
+                    reporter.clear_compile_errors();
+                    Some(Prog::Expr(expr))
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        }
     } else {
-        Some(Program::new(stmts))
+        Some(Prog::Stmts(stmts))
     }
 }
 

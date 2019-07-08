@@ -40,4 +40,8 @@ impl Reporter {
     pub fn report_runtime_error(&mut self, message: String) {
         self.runtime_error = Some(message);
     }
+
+    pub fn clear_compile_errors(&mut self) {
+        self.compile_errors.clear();
+    }
 }

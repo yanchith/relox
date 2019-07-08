@@ -4,30 +4,26 @@ use std::fmt;
 use crate::token::{Token, TokenValue};
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Program {
-    stmts: Vec<Stmt>,
+pub enum Prog {
+    Stmts(Vec<Stmt>),
+    Expr(Expr),
 }
 
-impl Program {
-    pub fn new(stmts: Vec<Stmt>) -> Self {
-        Self { stmts }
-    }
-
-    pub fn stmts(&self) -> &[Stmt] {
-        &self.stmts
-    }
-}
-
-impl fmt::Display for Program {
+impl fmt::Display for Prog {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("(program")?;
-
-        for stmt in &self.stmts {
-            f.write_str(" ")?;
-            f.write_str(&stmt.to_string())?;
+        match self {
+            Prog::Stmts(stmts) => {
+                f.write_str("(stmts-prog")?;
+                for stmt in stmts {
+                    f.write_str(" ")?;
+                    f.write_str(&stmt.to_string())?;
+                }
+                f.write_str(")")?;
+            }
+            Prog::Expr(expr) => {
+                write!(f, "(expr-prog {})", expr)?;
+            }
         }
-
-        f.write_str(")")?;
 
         Ok(())
     }
@@ -172,8 +168,7 @@ impl ClassDeclStmt {
 
 impl fmt::Display for ClassDeclStmt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("(class ")?;
-        f.write_str("(< ")?;
+        f.write_str("(class (< ")?;
         f.write_str(&self.ident)?;
         f.write_str(" ")?;
         f.write_str(self.superclass.as_ref().map(|s| s.ident()).unwrap_or("nil"))?;

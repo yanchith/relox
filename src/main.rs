@@ -31,7 +31,7 @@ fn run_file(file_path: String) {
     let mut interpreter = Interpreter::new();
     let mut reporter = Reporter::new();
     let buffer = std::fs::read_to_string(&file_path).expect("Failed to read file");
-    run(&mut interpreter, &mut reporter, &buffer);
+    run(&mut interpreter, &mut reporter, &buffer, false);
 
     let exit_status = if reporter.has_compile_error() {
         Some(65)
@@ -66,28 +66,33 @@ fn run_prompt() {
             .read_line(&mut buffer)
             .expect("Failed to read from console");
 
-        run(&mut interpreter, &mut reporter, &buffer);
+        run(&mut interpreter, &mut reporter, &buffer, true);
         buffer.clear();
     }
 }
 
-fn run(interpreter: &mut Interpreter, reporter: &mut Reporter, script: &str) {
+fn run(
+    interpreter: &mut Interpreter,
+    reporter: &mut Reporter,
+    script: &str,
+    allow_expr_progs: bool,
+) {
     let tokens = lexer::lex(reporter, script);
     if reporter.has_compile_error() {
         return;
     }
 
-    if let Some(program) = parser::parse(reporter, &tokens) {
+    if let Some(prog) = parser::parse(reporter, &tokens, allow_expr_progs) {
         if reporter.has_compile_error() {
             return;
         }
-        println!("{}", program);
+        println!("{}", prog);
 
-        resolver::resolve(reporter, interpreter, program.stmts());
+        resolver::resolve(reporter, interpreter, &prog);
         if reporter.has_compile_error() {
             return;
         }
 
-        interpreter.interpret(reporter, &program);
+        interpreter.interpret(reporter, &prog);
     }
 }

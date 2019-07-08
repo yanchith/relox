@@ -87,14 +87,25 @@ impl Interpreter {
         self.locals.insert(ast_id, distance);
     }
 
-    pub fn interpret(&mut self, reporter: &mut Reporter, program: &ast::Program) {
-        for stmt in program.stmts() {
-            match self.eval_stmt(stmt) {
-                Ok(Value::Nil) => (),
-                Ok(value) => println!("{}", value),
+    pub fn interpret(&mut self, reporter: &mut Reporter, prog: &ast::Prog) {
+        match prog {
+            ast::Prog::Stmts(stmts) => {
+                for stmt in stmts {
+                    match self.eval_stmt(stmt) {
+                        Err(err) => {
+                            reporter.report_runtime_error(err.to_string());
+                            break;
+                        }
+                        _ => (),
+                    }
+                }
+            }
+            ast::Prog::Expr(expr) => match self.eval_expr(expr) {
+                Ok(value) => {
+                    println!("{}", value);
+                }
                 Err(err) => {
                     reporter.report_runtime_error(err.to_string());
-                    break;
                 }
             }
         }
@@ -120,48 +131,20 @@ impl Interpreter {
         self.env = new_env;
     }
 
-    // FIXME(yanchith): don't return a value from here -> even
-    // expression statements should not return anything. Instead allow
-    // interpretting expressions in repl explicitely. Maybe `Program`
-    // should be an enum: `Expr | Stmts` and `interpret` should be
-    // able to handle expression programs?
-    fn eval_stmt(&mut self, stmt: &ast::Stmt) -> InterpretResult<Value> {
+    fn eval_stmt(&mut self, stmt: &ast::Stmt) -> InterpretResult<()> {
         match stmt {
-            ast::Stmt::VarDecl(var_decl) => {
-                self.eval_var_decl_stmt(var_decl)?;
-                Ok(Value::Nil)
+            ast::Stmt::VarDecl(var_decl) => self.eval_var_decl_stmt(var_decl),
+            ast::Stmt::FunDecl(fun_decl) => self.eval_fun_decl_stmt(fun_decl),
+            ast::Stmt::ClassDecl(class_decl) => self.eval_class_decl_stmt(class_decl),
+            ast::Stmt::Expr(expr) => {
+                self.eval_expr(expr.expr())?;
+                Ok(())
             }
-            ast::Stmt::FunDecl(fun_decl) => {
-                self.eval_fun_decl_stmt(fun_decl)?;
-                Ok(Value::Nil)
-            }
-            ast::Stmt::ClassDecl(class_decl) => {
-                self.eval_class_decl_stmt(class_decl)?;
-                Ok(Value::Nil)
-            }
-            // TODO: stop returning the value he
-            ast::Stmt::Expr(expr) => self.eval_expr(expr.expr()),
-            ast::Stmt::If(if_) => {
-                self.eval_if_stmt(if_)?;
-                Ok(Value::Nil)
-            }
-            ast::Stmt::While(while_) => {
-                self.eval_while_stmt(while_)?;
-                Ok(Value::Nil)
-            }
-            ast::Stmt::Print(print) => {
-                self.eval_print_stmt(print)?;
-                Ok(Value::Nil)
-            }
-            ast::Stmt::Return(return_) => {
-                // TODO: this actually always returns Err(Return), remove this hack!
-                self.eval_return_stmt(return_)?;
-                Ok(Value::Nil)
-            }
-            ast::Stmt::Block(block) => {
-                self.eval_block_stmt(block)?;
-                Ok(Value::Nil)
-            }
+            ast::Stmt::If(if_) => self.eval_if_stmt(if_),
+            ast::Stmt::While(while_) => self.eval_while_stmt(while_),
+            ast::Stmt::Print(print) => self.eval_print_stmt(print),
+            ast::Stmt::Return(return_) => self.eval_return_stmt(return_),
+            ast::Stmt::Block(block) => self.eval_block_stmt(block),
         }
     }
 

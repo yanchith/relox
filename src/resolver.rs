@@ -42,9 +42,12 @@ impl fmt::Display for ResolveError {
 
 pub type ResolveResult = Result<(), ResolveError>;
 
-pub fn resolve(reporter: &mut Reporter, interpreter: &mut Interpreter, stmts: &[ast::Stmt]) {
+pub fn resolve(reporter: &mut Reporter, interpreter: &mut Interpreter, prog: &ast::Prog) {
     let mut ctx = ResolveCtx::new(interpreter);
-    let res = resolve_stmts(&mut ctx, stmts);
+    let res = match prog {
+        ast::Prog::Stmts(stmts) => resolve_stmts(&mut ctx, stmts),
+        ast::Prog::Expr(expr) => resolve_expr(&mut ctx, expr),
+    };
 
     if let Err(err) = res {
         reporter.report_compile_error(err.to_string());
