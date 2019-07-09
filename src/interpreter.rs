@@ -107,7 +107,7 @@ impl Interpreter {
                 Err(err) => {
                     reporter.report_runtime_error(err.to_string());
                 }
-            }
+            },
         }
 
         if reporter.has_runtime_error() {
@@ -190,11 +190,23 @@ impl Interpreter {
             .borrow_mut()
             .define(class_decl.ident().to_string(), Value::Nil);
 
+        // Similar to what happens with `this`, but the environment
+        // for `super` can be created just once, when we declare the
+        // class.
+        let method_environment = if let Some(ref superclass) = superclass {
+            let mut env = Env::with_parent(Rc::clone(&self.env));
+            env.define("super".to_string(), Value::Class(Rc::clone(superclass)));
+            Rc::new(RefCell::new(env))
+        } else {
+            // FIXME(yanchith): this clone is redundant
+            Rc::clone(&self.env)
+        };
+
         let mut methods = HashMap::with_capacity(class_decl.methods().len());
         for method in class_decl.methods() {
             let function = FunctionCallable::new(
                 method.clone(),
-                Rc::clone(&self.env),
+                Rc::clone(&method_environment),
                 method.ident() == "init",
             );
             methods.insert(method.ident().to_string(), function);
@@ -269,6 +281,7 @@ impl Interpreter {
             ast::Expr::Get(get) => self.eval_get_expr(get),
             ast::Expr::Set(set) => self.eval_set_expr(set),
             ast::Expr::This(this) => self.eval_this_expr(this),
+            ast::Expr::Super(super_) => self.eval_super_expr(super_),
         }
     }
 
@@ -499,5 +512,37 @@ impl Interpreter {
             .get(&this.ast_id())
             .expect("'this' must always be resolved");
         Ok(self.env.borrow().get_at_distance("this", *distance))
+    }
+
+    fn eval_super_expr(&mut self, super_: &ast::SuperExpr) -> InterpretResult<Value> {
+        let distance = *self
+            .locals
+            .get(&super_.ast_id())
+            .expect("'super' must always be resolved");
+
+        let env = self.env.borrow();
+        let superclass = env.get_at_distance("super", distance);
+
+        // This counts on the scope containing 'this' (the instance)
+        // to be one closer than the scope containing 'super'
+        let this = if let Value::Instance(instance) = env.get_at_distance("this", distance - 1) {
+            instance
+        } else {
+            panic!("Assertion failed: 'this' must an instance");
+        };
+
+        match superclass {
+            Value::Class(class) => match class.find_method(super_.method()) {
+                Some(method) => {
+                    let bound_method = method.bind(this);
+                    Ok(Value::Callable(CallableValue::new(Box::new(bound_method))))
+                }
+                None => Err(InterpretError::UndefinedPropertyUse(
+                    class.ident().to_string(),
+                    super_.method().to_string(),
+                )),
+            },
+            _ => panic!("Assertion failed: Only classes can be superclasses"),
+        }
     }
 }

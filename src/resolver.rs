@@ -15,6 +15,8 @@ pub enum ResolveError {
     ThisOutsideMethod,
     InitializerReturnsValue,
     ClassInheritsFromItself(String),
+    SuperOutsideClass,
+    SuperWithoutSuperclass,
 }
 
 impl fmt::Display for ResolveError {
@@ -35,6 +37,12 @@ impl fmt::Display for ResolveError {
             ResolveError::InitializerReturnsValue => write!(f, "Initializers Can't return a value"),
             ResolveError::ClassInheritsFromItself(ident) => {
                 write!(f, "Class {} inherits from itself", ident)
+            }
+            ResolveError::SuperOutsideClass => {
+                write!(f, "'super' can't be used outside of a class")
+            }
+            ResolveError::SuperWithoutSuperclass => {
+                write!(f, "'super' can only be used in classes with superclass")
             }
         }
     }
@@ -66,6 +74,7 @@ enum FunTy {
 enum ClassTy {
     None,
     Class,
+    Subclass,
 }
 
 #[derive(Debug)]
@@ -214,6 +223,8 @@ fn resolve_class_decl_stmt(ctx: &mut ResolveCtx, class_decl: &ast::ClassDeclStmt
     ctx.declare(class_decl.ident())?;
     ctx.define(class_decl.ident());
 
+    let mut class_ty = ClassTy::Class;
+
     // Try resolving superclass expression if any
     if let Some(superclass) = class_decl.superclass() {
         if class_decl.ident() == superclass.ident() {
@@ -223,11 +234,18 @@ fn resolve_class_decl_stmt(ctx: &mut ResolveCtx, class_decl: &ast::ClassDeclStmt
 
         // Superclass is a VarExpr
         resolve_var_expr(ctx, superclass)?;
-    }
+
+        // Create a scope that allows `super` to be referenced
+        ctx.push_scope();
+        ctx.declare("super")?;
+        ctx.define("super");
+
+        class_ty = ClassTy::Subclass;
+    };
 
     // A class has its own scope with "this" defined
     let enclosing_class = ctx.current_class();
-    ctx.set_current_class(ClassTy::Class);
+    ctx.set_current_class(class_ty);
     ctx.push_scope();
 
     ctx.declare("this")?;
@@ -244,6 +262,11 @@ fn resolve_class_decl_stmt(ctx: &mut ResolveCtx, class_decl: &ast::ClassDeclStmt
 
     ctx.pop_scope();
     ctx.set_current_class(enclosing_class);
+
+    // If we created a scope for `super`, pop it now
+    if class_decl.superclass().is_some() {
+        ctx.pop_scope();
+    }
 
     Ok(())
 }
@@ -309,6 +332,7 @@ fn resolve_expr(ctx: &mut ResolveCtx, expr: &ast::Expr) -> ResolveResult {
         ast::Expr::Get(get) => resolve_get_expr(ctx, get),
         ast::Expr::Set(set) => resolve_set_expr(ctx, set),
         ast::Expr::This(this) => resolve_this_expr(ctx, this),
+        ast::Expr::Super(super_) => resolve_super_expr(ctx, super_),
     }
 }
 
@@ -385,5 +409,16 @@ fn resolve_this_expr(ctx: &mut ResolveCtx, this: &ast::ThisExpr) -> ResolveResul
     } else {
         ctx.write_resolution(this.ast_id(), "this");
         Ok(())
+    }
+}
+
+fn resolve_super_expr(ctx: &mut ResolveCtx, super_: &ast::SuperExpr) -> ResolveResult {
+    match ctx.current_class() {
+        ClassTy::None => Err(ResolveError::SuperOutsideClass),
+        ClassTy::Class => Err(ResolveError::SuperWithoutSuperclass),
+        ClassTy::Subclass => {
+            ctx.write_resolution(super_.ast_id(), "super");
+            Ok(())
+        }
     }
 }

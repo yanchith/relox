@@ -409,3 +409,36 @@ class Greetest < Greeter {
 Greeter("Jan").greet();
 Greetest("Jan").greet();
 
+class Doughnut {
+    init() {
+        print "Doughnut init";
+    }
+
+    cook() {
+        print "Fry until golden brown.";
+    }
+}
+
+class BostonCream < Doughnut {
+    init() {
+        super.init();
+        print "BostonCream init";
+    }
+
+    cook() {
+        super.cook();
+        print "Pipe full of custard and coat with chocolate.";
+    }
+}
+
+BostonCream().cook();
+
+// class NoSuperclass {
+//     cook() {
+//         super.cook();
+//     }
+// }
+
+// print NoSuperclass().cook();
+
+// print super.foo();

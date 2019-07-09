@@ -363,6 +363,7 @@ pub enum Expr {
     Get(GetExpr),
     Set(SetExpr),
     This(ThisExpr),
+    Super(SuperExpr),
 }
 
 impl fmt::Display for Expr {
@@ -379,6 +380,7 @@ impl fmt::Display for Expr {
             Expr::Get(get) => write!(f, "{}", get),
             Expr::Set(set) => write!(f, "{}", set),
             Expr::This(this) => write!(f, "{}", this),
+            Expr::Super(super_) => write!(f, "{}", super_),
         }
     }
 }
@@ -705,6 +707,32 @@ impl ThisExpr {
 impl fmt::Display for ThisExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "this")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SuperExpr {
+    ast_id: u64,
+    method: String, // FIXME(yanchith): intern idents
+}
+
+impl SuperExpr {
+    pub fn new(ast_id: u64, method: String) -> Self {
+        Self { ast_id, method }
+    }
+
+    pub fn ast_id(&self) -> u64 {
+        self.ast_id
+    }
+
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+}
+
+impl fmt::Display for SuperExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "(. super {})", self.method)
     }
 }
 

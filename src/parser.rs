@@ -61,9 +61,10 @@
 //! multiplication → unary ( ( "/" | "*" ) unary )* ;
 //! unary          → ( "!" | "-" ) unary
 //!                | call ;
-//! call           → primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
-//! primary        → NUMBER | STRING | "false" | "true" | "nil"
-//!                | "(" expr ")" ;
+//! call           → primary ( "(" args? ")" | "." IDENTIFIER )* ;
+//! primary        → "true" | "false" | "nil" | "this"
+//!                | NUMBER | STRING | IDENTIFIER | "(" expr ")"
+//!                | "super" "." IDENTIFIER ;
 //!
 //! args           → expression ( "," expression )* ;
 //! ```
@@ -110,6 +111,7 @@ pub enum ParseError {
     ExpectedClosingParenAfterForIncrement(Option<Token>),
     ExpectedClosingParenAfterCall(Option<Token>),
     ExpectedIdentAfterDot(Option<Token>),
+    ExpectedDotAfterSuper(Option<Token>),
     ExpectedPrimaryExpr(Option<Token>),
     InvalidAssignTarget(Expr),
     TooManyCallArgs(Expr),
@@ -334,8 +336,14 @@ impl fmt::Display for ParseError {
                 f,
                 "Expected identifier after dot but found end of input",
             ),
+            ParseError::ExpectedDotAfterSuper(Some(token)) => {
+                write!(f, "Expeced dot after 'super' but found {}", token)
+            }
+            ParseError::ExpectedDotAfterSuper(None) => {
+                write!(f, "Expeced dot after 'super' but found end of input")
+            }
             ParseError::ExpectedPrimaryExpr(Some(token)) => {
-                write!(f, "Expected primary expression but found token {}", token)
+                write!(f, "Expected primary expression but found {}", token)
             }
             ParseError::ExpectedPrimaryExpr(None) => {
                 write!(f, "Expected primary expression but found end of input")
@@ -967,6 +975,24 @@ fn parse_primary(ctx: &mut ParseCtx) -> ParseResult<Expr> {
             TokenValue::Number(number) => Ok(Expr::Lit(LitExpr::Number(*number))),
             TokenValue::String(string) => Ok(Expr::Lit(LitExpr::String(string.clone()))),
             TokenValue::This => Ok(Expr::This(ThisExpr::new(ctx.next_id()))),
+            // Bare `super` is not supported, it always has to be used
+            // in conjunction with an identifier: `super.foo()`
+            TokenValue::Super => {
+                if ctx.read_token_if(&TokenValue::Dot).is_some() {
+                    if let Some(method_ident) = ctx.read_token_if_ident() {
+                        Ok(Expr::Super(SuperExpr::new(
+                            ctx.next_id(),
+                            method_ident.to_string(),
+                        )))
+                    } else {
+                        let token = ctx.peek_token().cloned();
+                        Err(ParseError::ExpectedIdentAfterDot(token))
+                    }
+                } else {
+                    let token = ctx.peek_token().cloned();
+                    Err(ParseError::ExpectedDotAfterSuper(token))
+                }
+            }
             // FIXME(yanchith): intern ident
             TokenValue::Ident(ident) => Ok(Expr::Var(VarExpr::new(ctx.next_id(), ident.clone()))),
             TokenValue::LeftParen => {
