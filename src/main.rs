@@ -86,7 +86,8 @@ fn run(
         if reporter.has_compile_error() {
             return;
         }
-        println!("{}", prog);
+        // Uncomment to print out AST
+        // println!("{}", prog);
 
         resolver::resolve(reporter, interpreter, &prog);
         if reporter.has_compile_error() {
